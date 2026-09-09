@@ -1,0 +1,17 @@
+{
+  "name": "backfill-sim",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backfill Sim — a pauseable backfill management simulation (GDD v1 vertical slice: one full pour)",
+  "type": "module",
+  "scripts": {
+    "dev": "esbuild src/main.ts --bundle --sourcemap --outfile=public/bundle.js --format=esm --servedir=public --serve=0.0.0.0:5173",
+    "build": "esbuild src/main.ts --bundle --minify --outfile=public/bundle.js --format=esm",
+    "watch": "esbuild src/main.ts --bundle --sourcemap --outfile=public/bundle.js --format=esm --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
