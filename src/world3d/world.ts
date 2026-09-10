@@ -23,6 +23,7 @@ import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
 import { TruckFleet } from "./trucks.js";
 import { Underground, type StopeUG } from "./underground.js";
+import { PlantInterior } from "./plantInterior.js";
 import {
   fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
   pourPressureMpa, BURST_PENALTY,
@@ -46,11 +47,13 @@ export class World {
   private crew!: WorkerCrew;
   private fleet!: TruckFleet;
   private underground!: Underground;
+  private plantInterior!: PlantInterior;
   private hud!: Hud;
   private canvas!: HTMLCanvasElement;
   private portal!: Vector3;
 
-  private mode: "surface" | "underground" = "surface";
+  private mode: "surface" | "underground" | "plant" = "surface";
+  private plantThroughput = 0;
   private cash = START_CASH;
   private powered = 0; private total = 0;
   private buildings: Placed[] = [];
@@ -93,6 +96,12 @@ export class World {
     this.crew = new WorkerCrew(this.scene, 5, PAD_RADIUS - 6, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
     this.fleet = new TruckFleet(this.scene, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
     this.underground = new Underground(this.scene, this.shadow);
+    this.plantInterior = new PlantInterior(
+      this.scene, this.shadow, this.root,
+      () => this.exitPlant(),
+      (cost) => { if (this.cash < cost) { this.hud.setStatus(`Not enough cash (${fmtMoney(cost)}).`); return false; } this.cash -= cost; this.updateEconomy(); return true; },
+      (m3h) => { this.plantThroughput = m3h; },
+    );
 
     this.hud = new Hud(this.root, {
       onSelect: (t) => this.onSelect(t),
@@ -189,6 +198,32 @@ export class World {
     this.hud.setMode("surface");
   }
 
+  private enterPlant() {
+    this.disarm();
+    this.mode = "plant";
+    this.surfaceRoot.setEnabled(false);
+    this.setSky(true);
+    this.plantInterior.enter();
+    const c = this.plantInterior.center();
+    this.camera.setTarget(c); this.camera.radius = 58; this.camera.beta = 0.62; this.camera.alpha = -Math.PI * 0.72;
+    this.hud.setHidden(true);
+  }
+
+  private exitPlant() {
+    this.mode = "surface";
+    this.plantInterior.exit();
+    this.surfaceRoot.setEnabled(true);
+    this.setSky(false);
+    this.camera.setTarget(new Vector3(0, 4, 0)); this.camera.radius = 96; this.camera.beta = 0.86; this.camera.alpha = -Math.PI * 0.72;
+    this.hud.setHidden(false);
+  }
+
+  /** Pour throughput is set by the plant you build inside: no line = slow contract plant. */
+  private pourRatePerDay(): number {
+    if (this.plantThroughput <= 0) return POUR_RATE_M3_PER_DAY * 0.4;
+    return POUR_RATE_M3_PER_DAY * Math.max(0.4, Math.min(1.2, this.plantThroughput / 55));
+  }
+
   // ---- live clock -----------------------------------------------------------
 
   private advanceTime(dt: number) {
@@ -218,7 +253,7 @@ export class World {
         continue;
       }
 
-      const delta = Math.min(POUR_RATE_M3_PER_DAY * f * dd, s.volumeM3 - s.placedM3);
+      const delta = Math.min(this.pourRatePerDay() * f * dd, s.volumeM3 - s.placedM3);
       s.placedM3 += delta;
       this.cash -= PASTE_COST_PER_M3 * delta;
       if (s.placedM3 >= s.volumeM3) {
@@ -273,6 +308,7 @@ export class World {
   // ---- pointer --------------------------------------------------------------
 
   private onPointer(pi: { type: number; event: { button?: number } }) {
+    if (this.mode === "plant") { this.plantInterior.handlePointer(pi); return; }
     if (this.mode === "underground") {
       if (pi.type === PointerEventTypes.POINTERTAP && pi.event.button !== 2) {
         const hit = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (m) => !!(m.metadata as any)?.stopeId);
@@ -281,7 +317,17 @@ export class World {
       }
       return;
     }
-    if (!this.armed || !this.ghost) return;
+    // surface: click a building to enter/inspect it when not placing
+    if (!this.armed) {
+      if (pi.type === PointerEventTypes.POINTERTAP && pi.event.button !== 2) {
+        const hit = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (m) => !!(m.metadata as any)?.buildingType);
+        const bt = (hit?.pickedMesh?.metadata as any)?.buildingType as string | undefined;
+        if (bt === "plant") this.enterPlant();
+        else if (bt) { const spec = specOf(bt); this.hud.setStatus(`${spec.label} · upkeep ${fmtMoney(spec.opexPerDay)}/day`); }
+      }
+      return;
+    }
+    if (!this.ghost) return;
     if (pi.type === PointerEventTypes.POINTERMOVE) {
       const hit = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (m) => m === this.ground);
       if (!hit?.pickedPoint) return;
@@ -334,7 +380,7 @@ export class World {
   }
 
   private place(spec: BuildingSpec, at: Vector3) {
-    const root = spec.make(this.scene, (m) => this.shadow.addShadowCaster(m));
+    const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type }; });
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     this.cash -= spec.cost;
     this.opexPerDay += spec.opexPerDay;
@@ -480,6 +526,7 @@ export class World {
   /** Debug/testing hooks. */
   debugBuild(type: string, x: number, z: number) { const spec = specOf(type); this.place(spec, new Vector3(x, heightAt(x, z), z)); this.disarm(); }
   debugDescend() { this.descend(); }
+  debugEnterPlant() { this.enterPlant(); }
   debugReticulate(i: number, choke = false) {
     const st = this.underground.stopes[i]; if (st.status === "locked") st.status = "available";
     const net = this.underground.net;

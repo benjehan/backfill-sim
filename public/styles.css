@@ -406,6 +406,14 @@ select, input[type=number] {
 .segChk { width: 14px; text-align: center; font-weight: 700; }
 .segChk.ok { color: var(--green); } .segChk.bad { color: var(--red); }
 
+/* plant interior overlay */
+.plantHud { position: absolute; inset: 0; pointer-events: none; z-index: 11; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; color: var(--text); }
+.phTop { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 14px; align-items: center; pointer-events: auto; }
+.phTop .whMode { position: static; transform: none; }
+.phTitle { background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 9px 14px; font-weight: 700; backdrop-filter: blur(3px); }
+.phTitle b { color: var(--accent); } .phTitle b.good { color: var(--green); }
+.phStatus { position: absolute; left: 50%; bottom: 112px; transform: translateX(-50%); background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; max-width: 480px; text-align: center; backdrop-filter: blur(3px); }
+
 /* live clock + schedule */
 .whClock { position: absolute; top: 48px; left: 18px; display: flex; align-items: center; gap: 4px; }
 .whDay { background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 14px; min-width: 62px; }

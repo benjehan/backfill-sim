@@ -26,12 +26,14 @@ export class Hud {
   private pauseBtn: HTMLButtonElement;
   private speedBtns: HTMLButtonElement[] = [];
   private result: HTMLElement;
+  private rootEl: HTMLElement;
   private buttons = new Map<string, HTMLButtonElement>();
   private armed: string | null = null;
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
     const root = document.createElement("div");
     root.className = "worldHud";
+    this.rootEl = root;
     root.innerHTML = `
       <div class="whBrand">CUT &amp; <span>FILL</span> <em>· Wheal Verity</em></div>
       <div class="whClock">
@@ -125,4 +127,5 @@ export class Hud {
   }
 
   showResult(html: string) { this.result.innerHTML = html; this.result.classList.remove("hidden"); }
+  setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }
 }
