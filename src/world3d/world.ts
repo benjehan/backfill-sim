@@ -98,7 +98,13 @@ export class World {
     this.surfaceRoot = new TransformNode("surface", this.scene);
     this.ground = createTerrain(this.scene); this.ground.parent = this.surfaceRoot;
     this.portal = this.createPortal();
-    this.crew = new WorkerCrew(this.scene, 5, PAD_RADIUS - 6, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
+    this.crew = new WorkerCrew(
+      this.scene, 5, PAD_RADIUS - 6, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot,
+      () => [
+        ...this.buildings.map((b) => ({ x: b.pos.x, z: b.pos.z, r: Math.max(b.spec.fw, b.spec.fd) / 2 + 1 })),
+        { x: this.portal.x, z: this.portal.z, r: 6 },
+      ],
+    );
     this.fleet = new TruckFleet(this.scene, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
     this.underground = new Underground(this.scene, this.shadow);
     this.plantInterior = new PlantInterior(

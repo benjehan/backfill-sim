@@ -23,9 +23,30 @@ export class WorkerCrew {
   private workers: Worker[] = [];
   private roam: number;
 
-  constructor(private scene: Scene, count: number, roamRadius: number, private onMesh?: (m: Mesh) => void, private parent?: TransformNode) {
+  constructor(
+    private scene: Scene, count: number, roamRadius: number,
+    private onMesh?: (m: Mesh) => void, private parent?: TransformNode,
+    private obstacles?: () => { x: number; z: number; r: number }[],
+  ) {
     this.roam = roamRadius;
     this.add(count);
+  }
+
+  /** Head for a spot near a building (purposeful) or a random point. */
+  private pickTarget(obs: { x: number; z: number; r: number }[]): Vector3 {
+    let t: Vector3;
+    if (obs.length && Math.random() < 0.6) {
+      const o = obs[Math.floor(Math.random() * obs.length)];
+      const a = Math.random() * Math.PI * 2;
+      const d = o.r + 3 + Math.random() * 3;
+      t = new Vector3(o.x + Math.cos(a) * d, 0, o.z + Math.sin(a) * d);
+    } else t = this.randSpot();
+    // never target a point inside a building — nudge it clear
+    for (const o of obs) {
+      const ox = t.x - o.x, oz = t.z - o.z; const d = Math.hypot(ox, oz) || 0.001;
+      if (d < o.r + 2) { t.x = o.x + (ox / d) * (o.r + 3); t.z = o.z + (oz / d) * (o.r + 3); }
+    }
+    return t;
   }
 
   /** Spawn more wandering crew (e.g. when a building that employs people is placed). */
@@ -34,6 +55,7 @@ export class WorkerCrew {
   }
 
   get count() { return this.workers.length; }
+  positions() { return this.workers.map((w) => ({ x: w.root.position.x, z: w.root.position.z })); }
 
   private randSpot(): Vector3 {
     const a = Math.random() * Math.PI * 2;
@@ -74,16 +96,29 @@ export class WorkerCrew {
   }
 
   update(dt: number) {
+    const obs = this.obstacles?.() ?? [];
     for (const w of this.workers) {
       const p = w.root.position;
       const dx = w.target.x - p.x, dz = w.target.z - p.z;
       const dist = Math.hypot(dx, dz);
-      if (dist < 1.2) { w.target = this.randSpot(); continue; }
-      const step = Math.min(dist, w.speed * dt);
-      p.x += (dx / dist) * step;
-      p.z += (dz / dist) * step;
+      if (dist < 1.5) { w.target = this.pickTarget(obs); continue; }
+      // steer: seek target + repel from buildings + separate from crew
+      let ax = dx / dist, az = dz / dist;
+      for (const o of obs) {
+        const ox = p.x - o.x, oz = p.z - o.z; const d = Math.hypot(ox, oz) || 0.001;
+        const clear = o.r + 3.5;
+        if (d < clear) { const push = ((clear - d) / clear) * 4.0; ax += (ox / d) * push; az += (oz / d) * push; }
+      }
+      for (const other of this.workers) {
+        if (other === w) continue;
+        const ox = p.x - other.root.position.x, oz = p.z - other.root.position.z; const d = Math.hypot(ox, oz);
+        if (d > 0.001 && d < 2.2) { const push = ((2.2 - d) / 2.2) * 1.2; ax += (ox / d) * push; az += (oz / d) * push; }
+      }
+      const m = Math.hypot(ax, az) || 1; ax /= m; az /= m;
+      const step = w.speed * dt;
+      p.x += ax * step; p.z += az * step;
       p.y = heightAt(p.x, p.z);
-      w.root.rotation.y = Math.atan2(dx, dz);
+      w.root.rotation.y = Math.atan2(ax, az);
       w.phase += dt * w.speed * 2.5;
       w.legs.position.y = 0.5 + Math.abs(Math.sin(w.phase)) * 0.12; // walk bob
     }
