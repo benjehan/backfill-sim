@@ -10,6 +10,8 @@ export interface HudCallbacks {
   onPanelAction: (act: string) => void;
   onPause: () => void;
   onSpeed: (i: number) => void;
+  onLab: () => void;
+  onRecipe: (solids: number, binder: number) => void;
 }
 
 const SPEED_LABELS = ["1×", "2×", "4×", "8×"];
@@ -27,6 +29,8 @@ export class Hud {
   private speedBtns: HTMLButtonElement[] = [];
   private result: HTMLElement;
   private rootEl: HTMLElement;
+  private labPanel!: HTMLElement;
+  private labReadoutEl!: HTMLElement;
   private buttons = new Map<string, HTMLButtonElement>();
   private armed: string | null = null;
 
@@ -40,8 +44,16 @@ export class Hud {
         <div class="whDay" id="whDay">Day 1</div>
         <button class="whSpd" id="whPause">⏸</button>
         ${SPEED_LABELS.map((l, i) => `<button class="whSpd" data-spd="${i}">${l}</button>`).join("")}
+        <button class="whSpd whLab" id="whLab">🧪 Lab</button>
       </div>
       <div class="whSched" id="whSched"></div>
+      <div class="whLabPanel hidden" id="whLabPanel">
+        <div class="pHead">🧪 Lab — mix design <span class="pClose" id="labClose">✕</span></div>
+        <div class="pNote">More solids &amp; binder = stronger fill, but stiffer paste (harder to pump). Design against the deepest stope's target.</div>
+        <label class="labSlider"><span>Solids <b id="labSolidsV">74.0%</b></span><input type="range" id="inSolids" min="66" max="82" step="0.5" value="74"></label>
+        <label class="labSlider"><span>Binder <b id="labBinderV">200 kg/m³</b></span><input type="range" id="inBinder" min="60" max="450" step="5" value="200"></label>
+        <div id="labReadout"></div>
+      </div>
       <div class="whEcon">
         <div class="whStat"><span>Cash</span><b id="whCash">$0</b></div>
         <div class="whStat"><span>Power</span><b id="whPower">0/0</b></div>
@@ -66,6 +78,16 @@ export class Hud {
 
     this.modeBtn.addEventListener("click", cb.onToggleMode);
     this.pauseBtn.addEventListener("click", cb.onPause);
+    this.labPanel = root.querySelector("#whLabPanel")!;
+    const labReadout = root.querySelector("#labReadout")!;
+    root.querySelector("#whLab")!.addEventListener("click", cb.onLab);
+    root.querySelector("#labClose")!.addEventListener("click", () => this.labPanel.classList.add("hidden"));
+    const inS = root.querySelector("#inSolids") as HTMLInputElement;
+    const inB = root.querySelector("#inBinder") as HTMLInputElement;
+    const sV = root.querySelector("#labSolidsV")!, bV = root.querySelector("#labBinderV")!;
+    const emit = () => { sV.textContent = (+inS.value).toFixed(1) + "%"; bV.textContent = inB.value + " kg/m³"; cb.onRecipe(+inS.value / 100, +inB.value); };
+    inS.addEventListener("input", emit); inB.addEventListener("input", emit);
+    this.labReadoutEl = labReadout as HTMLElement;
     root.querySelectorAll<HTMLButtonElement>(".whSpd[data-spd]").forEach((b) => {
       this.speedBtns.push(b);
       b.addEventListener("click", () => cb.onSpeed(+b.dataset.spd!));
@@ -128,4 +150,6 @@ export class Hud {
 
   showResult(html: string) { this.result.innerHTML = html; this.result.classList.remove("hidden"); }
   setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }
+  toggleLab(readout: string) { this.labPanel.classList.toggle("hidden"); if (!this.labPanel.classList.contains("hidden")) this.setLabReadout(readout); }
+  setLabReadout(html: string) { this.labReadoutEl.innerHTML = html; }
 }

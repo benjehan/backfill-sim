@@ -33,6 +33,10 @@ export interface StopeUG {
   flowFactor: number;
   pressureMpa: number;
   plugDrift: number;
+  // QA/QC
+  targetUcsKpa: number;
+  ucsAchievedKpa: number;
+  ucsPass: boolean | null;
 }
 
 const UNIT_M = 7.5;
@@ -110,6 +114,8 @@ export class Underground {
           volumeM3: 9000 + sx * 90 + lv.depthM * 6, placedM3: 0,
           availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
+          targetUcsKpa: 500 + LEVELS.indexOf(lv) * 150 + (sx === 56 ? 100 : 0), // deeper/further = higher target
+          ucsAchievedKpa: 0, ucsPass: null,
         });
       }
     }

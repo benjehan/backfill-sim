@@ -25,6 +25,10 @@ import { TruckFleet } from "./trucks.js";
 import { Underground, type StopeUG } from "./underground.js";
 import { PlantInterior } from "./plantInterior.js";
 import {
+  DEFAULT_RECIPE, type Recipe, frictionScale, ucs28Kpa, recipeCostPerM3,
+  yieldStressPa, frictionKpaPerM, pumpability, ucsVariance,
+} from "./labModel.js";
+import {
   fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
   pourPressureMpa, BURST_PENALTY,
   SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, HORIZON_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
@@ -54,6 +58,7 @@ export class World {
 
   private mode: "surface" | "underground" | "plant" = "surface";
   private plantThroughput = 0;
+  private recipe: Recipe = { ...DEFAULT_RECIPE };
   private cash = START_CASH;
   private powered = 0; private total = 0;
   private buildings: Placed[] = [];
@@ -109,6 +114,8 @@ export class World {
       onPanelAction: (a) => this.onPanelAction(a),
       onPause: () => { this.paused = !this.paused; this.refreshClock(); },
       onSpeed: (i) => { this.speedIdx = i; this.paused = false; this.refreshClock(); },
+      onLab: () => this.hud.toggleLab(this.labReadout()),
+      onRecipe: (solids, binder) => { this.recipe.solids = solids; this.recipe.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); },
     });
     this.updateEconomy();
     this.underground.updateSchedule(this.day);
@@ -243,7 +250,7 @@ export class World {
       s.plugDrift = Math.min(1, s.plugDrift);
 
       const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
-      s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise);
+      s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipe.solids));
 
       if (s.pressureMpa > s.cls.ratingMpa) {
         this.underground.burst(s);
@@ -255,7 +262,7 @@ export class World {
 
       const delta = Math.min(this.pourRatePerDay() * f * dd, s.volumeM3 - s.placedM3);
       s.placedM3 += delta;
-      this.cash -= PASTE_COST_PER_M3 * delta;
+      this.cash -= recipeCostPerM3(this.recipe) * delta;
       if (s.placedM3 >= s.volumeM3) {
         this.underground.completePour(s, this.day);
         this.cash += fillRevenue(s.volumeM3);
@@ -267,6 +274,12 @@ export class World {
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
+    for (const s of ev.newlyCured) {
+      const achieved = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay);
+      s.ucsAchievedKpa = Math.round(achieved);
+      s.ucsPass = achieved >= s.targetUcsKpa;
+      this.hud.setStatus(`${s.id} 28-day cylinder ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa — ${s.ucsPass ? "PASS ✓" : "FAIL ✗ (geotech won't sign the hand-back)"}.`);
+    }
     this.updateEconomy();
 
     // throttled HUD refresh
@@ -274,6 +287,20 @@ export class World {
     else if (this.mode === "underground" && this.selectedStope?.status === "pouring") this.renderStopePanel();
 
     if (this.day >= HORIZON_DAY || this.underground.counts().cured === this.underground.stopes.length) this.endCampaign();
+  }
+
+  private labReadout(): string {
+    const r = this.recipe;
+    const ucs = ucs28Kpa(r);
+    const pump = pumpability(r.solids);
+    const maxTarget = Math.max(...this.underground.stopes.map((s) => s.targetUcsKpa));
+    const strengthOk = ucs >= maxTarget;
+    return `
+      <div class="labRow"><span>${yieldStressPa(r.solids).toFixed(0)} Pa</span><small>yield stress</small></div>
+      <div class="labRow"><span>${frictionKpaPerM(r.solids).toFixed(1)} kPa/m</span><small>friction gradient</small></div>
+      <div class="labRow"><span class="${strengthOk ? "good" : "bad"}">${ucs.toFixed(0)} kPa</span><small>predicted 28-day UCS (need ${maxTarget})</small></div>
+      <div class="labRow"><span>$${recipeCostPerM3(r).toFixed(1)}/m³</span><small>paste cost</small></div>
+      <div class="labLight ${pump.level}">Pumpability: ${pump.label}</div>`;
   }
 
   private refreshClock() { this.hud.setClock(this.day, this.paused, this.speedIdx, SPEEDS); }
@@ -285,9 +312,10 @@ export class World {
     const stopes = this.underground.stopes;
     const total = stopes.length;
     const cured = stopes.filter((s) => s.status === "cured").length;
+    const passed = stopes.filter((s) => s.status === "cured" && s.ucsPass).length; // cured AND hit strength
     const onTime = stopes.filter((s) => s.status === "cured" && s.cureStartDay <= s.dueDay).length;
     let score = 0;
-    score += cured === total ? 3 : cured >= total - 1 ? 2 : cured >= total / 2 ? 1 : 0;
+    score += passed === total ? 3 : passed >= total - 1 ? 2 : passed >= total / 2 ? 1 : 0;
     score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
     score += this.cash > 0 ? 2 : 0;
     score += this.cash > START_CASH * 0.3 ? 1 : 0;
@@ -297,7 +325,7 @@ export class World {
       <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
       <div class="rsGrade grade-${grade}">${grade}</div>
       <div class="rsRows">
-        <div><span>Stopes cured</span><b>${cured}/${total}</b></div>
+        <div><span>Cylinders passed</span><b>${passed}/${total}</b></div>
         <div><span>On time</span><b>${onTime}/${total}</b></div>
         <div><span>Cash</span><b>${fmtMoney(this.cash)}</b></div>
         <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " burst" : "clean"}</b></div>
@@ -430,7 +458,7 @@ export class World {
     const head = staticHeadMpa(st.depthM);
     const dueLate = this.day > st.dueDay && (st.status === "available" || st.status === "piped");
     const due = `<span class="${dueLate ? "pLate" : ""}">${dueLate ? "OVERDUE" : "due day " + st.dueDay}</span>`;
-    const meta = `<div class="pMeta">−${st.depthM} m · ${st.volumeM3.toLocaleString()} m³ · run ${Math.round(st.lengthM)} m · ${due}<br>Static head ρgh: <b>${head.toFixed(1)} MPa</b></div>`;
+    const meta = `<div class="pMeta">−${st.depthM} m · ${st.volumeM3.toLocaleString()} m³ · run ${Math.round(st.lengthM)} m · ${due}<br>Static head ρgh: <b>${head.toFixed(1)} MPa</b> · target UCS <b>${st.targetUcsKpa} kPa</b></div>`;
     let body = "";
     if (st.status === "locked") {
       body = `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
@@ -487,8 +515,10 @@ export class World {
         <div class="pRow">Curing · <b>${st.cls?.name}</b></div>
         <div class="pBar"><div class="pBarFill cure" style="width:${pct}%"></div></div>
         <div class="pRow muted">${pct}% cured · ${daysLeft} d to strength</div>`;
-    } else {
-      body = `<div class="pRow good">✓ Cured — strength reached, ore access unlocked.</div>`;
+    } else { // cured
+      body = st.ucsPass === false
+        ? `<div class="pRow"><span class="pLate">✗ 28-day UCS ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa — FAILED. Geotech won't sign the hand-back.</span></div>`
+        : `<div class="pRow good">✓ Cured · UCS ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa — strength reached, ore access unlocked.</div>`;
     }
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
   }
@@ -527,6 +557,8 @@ export class World {
   debugBuild(type: string, x: number, z: number) { const spec = specOf(type); this.place(spec, new Vector3(x, heightAt(x, z), z)); this.disarm(); }
   debugDescend() { this.descend(); }
   debugEnterPlant() { this.enterPlant(); }
+  debugSetRecipe(solids: number, binder: number) { this.recipe.solids = solids; this.recipe.binderKgPerM3 = binder; }
+  debugLab() { this.hud.toggleLab(this.labReadout()); }
   debugReticulate(i: number, choke = false) {
     const st = this.underground.stopes[i]; if (st.status === "locked") st.status = "available";
     const net = this.underground.net;

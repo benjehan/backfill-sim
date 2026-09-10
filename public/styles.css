@@ -414,6 +414,22 @@ select, input[type=number] {
 .phTitle b { color: var(--accent); } .phTitle b.good { color: var(--green); }
 .phStatus { position: absolute; left: 50%; bottom: 112px; transform: translateX(-50%); background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; max-width: 480px; text-align: center; backdrop-filter: blur(3px); }
 
+/* lab panel */
+.whLab.on { background: var(--accent); color: #10202b; }
+.whLabPanel { position: absolute; left: 18px; top: 130px; width: 288px; background: rgba(11,19,27,.9); border: 1px solid var(--line); border-radius: 12px; padding: 14px; pointer-events: auto; backdrop-filter: blur(4px); }
+.labSlider { display: block; margin: 12px 0 4px; }
+.labSlider span { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+.labSlider b { color: var(--accent); }
+.labSlider input[type=range] { width: 100%; accent-color: var(--accent); }
+.labRow { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.labRow span { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.labRow span.good { color: var(--green); } .labRow span.bad { color: var(--red); }
+.labRow small { color: var(--muted); font-size: 11px; }
+.labLight { margin-top: 10px; padding: 7px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; }
+.labLight.green { background: #10241a; color: #a9e9c8; border: 1px solid var(--green); }
+.labLight.amber { background: #241a10; color: #ffd79a; border: 1px solid var(--amber); }
+.labLight.red { background: #241414; color: #ffb3b3; border: 1px solid var(--red); }
+
 /* live clock + schedule */
 .whClock { position: absolute; top: 48px; left: 18px; display: flex; align-items: center; gap: 4px; }
 .whDay { background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 14px; min-width: 62px; }

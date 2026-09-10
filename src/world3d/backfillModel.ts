@@ -28,9 +28,9 @@ export const frictionMpa = (lengthM: number) => (FRICTION_KPA_PER_M * lengthM) /
 export const BURST_PENALTY = 1_500_000;
 export const pourFrictionMpa = (lengthM: number, flowFactor: number) =>
   frictionMpa(lengthM) * Math.pow(Math.max(0.2, flowFactor), 1.8);
-export function pourPressureMpa(depthM: number, lengthM: number, choke: boolean, flowFactor: number, plugDrift: number, ratingMpa: number, noise: number): number {
+export function pourPressureMpa(depthM: number, lengthM: number, choke: boolean, flowFactor: number, plugDrift: number, ratingMpa: number, noise: number, frictionScale = 1): number {
   const head = staticHeadMpa(depthM) * (choke ? CHOKE_HEAD_RELIEF : 1);
-  return Math.max(0, head + pourFrictionMpa(lengthM, flowFactor) + plugDrift * ratingMpa + noise);
+  return Math.max(0, head + pourFrictionMpa(lengthM, flowFactor) * frictionScale + plugDrift * ratingMpa + noise);
 }
 
 /** Pressure the line must survive at the stope, with optional choke relief. */
