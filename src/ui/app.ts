@@ -80,6 +80,8 @@ export class App {
     } else {
       this.plantView?.destroy();
       this.plantView = null;
+      this.plant.solve();
+      this.game.setPlantCapacity(this.plant.deliveredM3h); // built plant now caps pour flow
       this.root.classList.remove("showPlant");
       this.mountedKey = ""; // force a full campaign remount
       this.sync();
@@ -184,6 +186,11 @@ export class App {
         <div class="board">${rows}</div>
         <button class="btn" data-action="skip3">⏩ Advance 3 days (wait for cures / mucking)</button>
       </div>
+      <div class="card plantStrip">
+        <div class="psInfo"><span>🏭 Surface plant</span>
+          <b>${g.plantBuilt ? `${g.plantCapacityM3h} m³/h` : `contract · ${Game.PLANT_BASELINE_M3H} m³/h`}</b></div>
+        <button class="btn sm" data-action="screen" data-s="plant">${g.plantBuilt ? "Tune plant →" : "Build plant →"}</button>
+      </div>
       <div class="card logCard">
         <h3>Mine activity</h3>
         <div class="log">${logHtml}</div>
@@ -245,8 +252,11 @@ export class App {
         <label class="slider"><span>${term("binder", "Binder dose")} <b id="dBinderVal"></b></span>
           <input type="range" id="sBinder" min="60" max="450" step="5" value="${g.recipe.binderKgPerM3}">
           <small>~70% of opex — deeper stopes want more strength</small></label>
-        <label class="field"><span>Target flow (m³/h)</span>
-          <input type="number" id="inFlow" min="10" max="80" step="5" value="${g.pourNote.targetFlowM3h}"></label>
+        <label class="field"><span>Target flow (m³/h) <b class="cap">≤ ${g.pourFlowCap} plant cap</b></span>
+          <input type="number" id="inFlow" min="10" max="${g.pourFlowCap}" step="5" value="${Math.min(g.pourNote.targetFlowM3h, g.pourFlowCap)}"></label>
+        <p class="muted small">${g.plantBuilt
+          ? `Your surface plant delivers ${g.plantCapacityM3h} m³/h — faster fills, tighter schedule.`
+          : `Pour rate capped at the ${Game.PLANT_BASELINE_M3H} m³/h contract plant. Build your own on the 🏭 Plant screen to pour faster.`}</p>
         <div id="designReadout"></div>
         <div class="row"><button class="btn" data-action="autoRecipe">✨ Auto-recipe</button></div>
         <button class="btn primary big" data-action="toPrepour" id="btnProceed">Issue pour note →</button>
@@ -282,7 +292,8 @@ export class App {
         <div class="subphase" id="subPhase"></div>
         <div id="pourGauges"></div>
         <label class="slider"><span>Flow rate <b id="flowVal"></b></span>
-          <input type="range" id="sFlow" min="0" max="80" step="1" value="${this.game.pour.targetFlowM3h}"></label>
+          <input type="range" id="sFlow" min="0" max="${this.game.pourFlowCap}" step="1" value="${Math.min(this.game.pour.targetFlowM3h, this.game.pourFlowCap)}">
+          <small>plant delivers up to ${this.game.pourFlowCap} m³/h</small></label>
         <div class="row"><button class="btn warn" data-action="flush">💧 Flush line</button><button class="btn" data-action="pause">⏸ Hold</button></div>
         <div class="alarms" id="alarms"></div>
       </div>`;

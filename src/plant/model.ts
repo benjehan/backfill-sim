@@ -42,8 +42,8 @@ export const CATALOG: Record<string, Spec> = {
   src_water: { type: "src_water", label: "Water", kind: "source", w: 2, h: 2, cost: 0, cap: 200, inputs: [], output: "water", color: "#2f5f86", icon: "≈" },
   src_binder: { type: "src_binder", label: "Binder silo", kind: "source", w: 2, h: 2, cost: 0, cap: 200, inputs: [], output: "binder", color: "#7a6a3f", icon: "⬢" },
   thickener: { type: "thickener", label: "Thickener", kind: "transform", w: 2, h: 2, cost: 40000, cap: 60, inputs: ["tailings"], ratios: [1.0], output: "thick", color: "#3f5566", icon: "◍", buildable: true },
-  mixer: { type: "mixer", label: "Mixer", kind: "transform", w: 2, h: 2, cost: 55000, cap: 50, inputs: ["thick", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#5a4a63", icon: "✳", buildable: true },
-  pump: { type: "pump", label: "Pump", kind: "transform", w: 2, h: 2, cost: 35000, cap: 55, inputs: ["paste"], ratios: [1.0], output: "pasteHP", color: "#664338", icon: "⚙", buildable: true },
+  mixer: { type: "mixer", label: "Mixer", kind: "transform", w: 2, h: 2, cost: 55000, cap: 60, inputs: ["thick", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#5a4a63", icon: "✳", buildable: true },
+  pump: { type: "pump", label: "Pump", kind: "transform", w: 2, h: 2, cost: 35000, cap: 70, inputs: ["paste"], ratios: [1.0], output: "pasteHP", color: "#664338", icon: "⚙", buildable: true },
   shaft: { type: "shaft", label: "Shaft", kind: "sink", w: 2, h: 2, cost: 0, cap: 999, inputs: ["pasteHP"], output: null, color: "#3a3f4a", icon: "▼" },
 };
 
@@ -76,7 +76,7 @@ const nid = (p: string) => `${p}${idc++}`;
 
 export class Plant {
   cash = 240_000;
-  targetM3h = 40;
+  targetM3h = 55;
   deliveredM3h = 0;
   machines: Machine[] = [];
   pipes: Pipe[] = [];

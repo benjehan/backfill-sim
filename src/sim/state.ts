@@ -115,6 +115,12 @@ export class Game {
   tailingsCapTph: number | null = null;
   tailingsCapUntilDay = 0;
 
+  // Surface plant (GDD 05): the built plant's throughput caps pour flow.
+  // A baseline "contract plant" floor keeps the mine runnable before you build.
+  static readonly PLANT_BASELINE_M3H = 45;
+  plantCapacityM3h = Game.PLANT_BASELINE_M3H;
+  plantBuilt = false; // has the player's own plant beaten the baseline?
+
   // Campaign end
   campaignOver = false;
   finalGrade = "";
@@ -287,7 +293,20 @@ export class Game {
     this.emit();
   }
 
-  setPourFlow(v: number) { this.pour.targetFlowM3h = Math.max(0, Math.min(80, v)); this.emit(); }
+  /** The most paste the surface plant can push right now (min of plant + any mill cap). */
+  get pourFlowCap(): number {
+    const cap = Math.max(Game.PLANT_BASELINE_M3H, this.plantCapacityM3h);
+    return this.tailingsCapTph != null ? Math.min(cap, this.tailingsCapTph) : cap;
+  }
+
+  /** Called by the plant builder: the built plant's delivered throughput. */
+  setPlantCapacity(deliveredM3h: number) {
+    this.plantCapacityM3h = Math.max(Game.PLANT_BASELINE_M3H, Math.round(deliveredM3h));
+    this.plantBuilt = deliveredM3h > Game.PLANT_BASELINE_M3H + 0.5;
+    this.emit();
+  }
+
+  setPourFlow(v: number) { this.pour.targetFlowM3h = Math.max(0, Math.min(this.pourFlowCap, v)); this.emit(); }
 
   flushLine() {
     if (!this.pour.active) return;
@@ -438,7 +457,7 @@ export class Game {
     if (p.subPhase === "line-fill" && p.elapsedHours > 0.9) { p.subPhase = "main"; p.lowSolidsStartDone = true; }
 
     let flowTarget = p.subPhase === "water-test" ? 0 : p.subPhase === "line-fill" ? p.targetFlowM3h * 0.5 : p.targetFlowM3h;
-    if (this.tailingsCapTph != null) flowTarget = Math.min(flowTarget, this.tailingsCapTph);
+    flowTarget = Math.min(flowTarget, this.pourFlowCap); // surface plant + mill throughput ceiling
     p.currentFlowM3h += (flowTarget - p.currentFlowM3h) * Math.min(1, hoursDt * 3);
     if (p.subPhase !== "water-test") p.placedM3 += p.currentFlowM3h * hoursDt;
 
