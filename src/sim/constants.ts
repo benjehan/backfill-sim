@@ -25,6 +25,18 @@ export const WATER_COST_PER_M3 = 0.8;
 export const POWER_COST_PER_M3 = 1.2; // rolled-up plant power per m^3 placed
 export const LABOUR_COST_PER_HOUR = 65;
 
+// UDS reticulation (GDD 06): the routing puzzle.
+// Design basis friction for validating a line before you know the exact pour recipe.
+export const DESIGN_FRICTION_KPA_PER_M = 4.0;
+// A choke station / orifice dissipates excess head in stages (keeps pipe class down, controls wear).
+export const CHOKE_DROP_MPA = 3.5;
+export const CHOKE_CAPEX = 14_000;
+// A booster pump station adds head for long or uphill runs.
+export const BOOSTER_ADD_MPA = 3.0;
+export const BOOSTER_CAPEX = 22_000;
+// Slack threshold: below this the line runs part-full — free-fall, air interface, wear (GDD 06).
+export const SLACK_MIN_MPA = 0.15;
+
 // Time model (GDD 03): 1 in-game day ≈ 75s real at 1x
 export const SECONDS_PER_GAME_DAY = 75;
 export const SPEEDS = [1, 2, 4, 8] as const;
