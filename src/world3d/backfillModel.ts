@@ -22,6 +22,17 @@ export const PIPE_CLASSES: PipeClass[] = [
 export const staticHeadMpa = (depthM: number) => (RHO_PASTE * G * depthM) / 1e6;
 export const frictionMpa = (lengthM: number) => (FRICTION_KPA_PER_M * lengthM) / 1000;
 
+// Live-pour pressure: friction rises steeply with flow (~flow^1.8); a forming
+// plug piles static head onto the line (blockage = pressure rises); burst when
+// the line pressure tops the pipe's rating.
+export const BURST_PENALTY = 1_500_000;
+export const pourFrictionMpa = (lengthM: number, flowFactor: number) =>
+  frictionMpa(lengthM) * Math.pow(Math.max(0.2, flowFactor), 1.8);
+export function pourPressureMpa(depthM: number, lengthM: number, choke: boolean, flowFactor: number, plugDrift: number, ratingMpa: number, noise: number): number {
+  const head = staticHeadMpa(depthM) * (choke ? CHOKE_HEAD_RELIEF : 1);
+  return Math.max(0, head + pourFrictionMpa(lengthM, flowFactor) + plugDrift * ratingMpa + noise);
+}
+
 /** Pressure the line must survive at the stope, with optional choke relief. */
 export function requiredMpa(depthM: number, lengthM: number, choke: boolean): number {
   const head = staticHeadMpa(depthM) * (choke ? CHOKE_HEAD_RELIEF : 1);

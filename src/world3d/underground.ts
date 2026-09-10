@@ -31,6 +31,10 @@ export interface StopeUG {
   choke: boolean;
   cureStartDay: number;
   pipes: Mesh[];
+  // live-pour runtime
+  flowFactor: number;
+  pressureMpa: number;
+  plugDrift: number;
 }
 
 const UNIT_M = 7.5;
@@ -105,6 +109,7 @@ export class Underground {
           id: "", mesh: chamber, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
           volumeM3: 9000 + sx * 90 + lv.depthM * 6, placedM3: 0,
           availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
+          flowFactor: 1, pressureMpa: 0, plugDrift: 0,
         });
       }
     }
@@ -201,6 +206,7 @@ export class Underground {
   startPour(stope: StopeUG): boolean {
     if (stope.status !== "piped") return false;
     stope.status = "pouring"; stope.placedM3 = 0;
+    stope.flowFactor = 1; stope.pressureMpa = 0; stope.plugDrift = 0;
     this.paint(stope, 0);
     return true;
   }
@@ -209,7 +215,15 @@ export class Underground {
   completePour(stope: StopeUG, day: number) {
     stope.placedM3 = stope.volumeM3;
     stope.status = "curing"; stope.cureStartDay = day;
+    stope.pressureMpa = 0; stope.plugDrift = 0;
     this.paint(stope, day);
+  }
+
+  /** Line burst — pour aborts, reticulation survives, stope must be re-poured. */
+  burst(stope: StopeUG) {
+    stope.status = "piped"; stope.placedM3 = 0;
+    stope.pressureMpa = 0; stope.plugDrift = 0; stope.flowFactor = 1;
+    this.paint(stope, 0);
   }
 }
 

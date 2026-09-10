@@ -25,6 +25,7 @@ import { TruckFleet } from "./trucks.js";
 import { Underground, type StopeUG } from "./underground.js";
 import {
   fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
+  pourPressureMpa, BURST_PENALTY,
   SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, HORIZON_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
@@ -61,6 +62,7 @@ export class World {
   private speedIdx = 1;
   private ended = false;
   private opexPerDay = 0;
+  private safetyIncidents = 0;
   private lastDayShown = 0;
   private get speed() { return SPEEDS[this.speedIdx]; }
 
@@ -195,10 +197,28 @@ export class World {
     this.day += (dt / SECONDS_PER_DAY) * this.speed;
     const dd = this.day - prev;
 
-    // timed pours: place m³ over game-time, charge paste, pay ore access on completion
+    // timed pours: pressure builds with flow + plug drift; burst if it tops rating
     for (const s of this.underground.stopes) {
-      if (s.status !== "pouring") continue;
-      const delta = Math.min(POUR_RATE_M3_PER_DAY * dd, s.volumeM3 - s.placedM3);
+      if (s.status !== "pouring" || !s.cls) continue;
+      const f = s.flowFactor;
+      // plug drift: too slow settles (laminar), too fast over-pushes; the sweet band decays it
+      if (f < 0.8) s.plugDrift += (0.8 - f) * 0.6 * dd;
+      else if (f > 1.15) s.plugDrift += (f - 1.15) * 0.5 * dd;
+      else s.plugDrift = Math.max(0, s.plugDrift - 0.22 * dd);
+      s.plugDrift = Math.min(1, s.plugDrift);
+
+      const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
+      s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise);
+
+      if (s.pressureMpa > s.cls.ratingMpa) {
+        this.underground.burst(s);
+        this.safetyIncidents++;
+        this.cash -= BURST_PENALTY;
+        this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
+        continue;
+      }
+
+      const delta = Math.min(POUR_RATE_M3_PER_DAY * f * dd, s.volumeM3 - s.placedM3);
       s.placedM3 += delta;
       this.cash -= PASTE_COST_PER_M3 * delta;
       if (s.placedM3 >= s.volumeM3) {
@@ -236,14 +256,16 @@ export class World {
     score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
     score += this.cash > 0 ? 2 : 0;
     score += this.cash > START_CASH * 0.3 ? 1 : 0;
-    const grade = score >= 7 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D";
+    let grade = score >= 7 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D";
+    if (this.safetyIncidents > 0 && (grade === "S" || grade === "A")) grade = "B"; // a burst caps the review
     this.hud.showResult(`
       <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
       <div class="rsGrade grade-${grade}">${grade}</div>
       <div class="rsRows">
         <div><span>Stopes cured</span><b>${cured}/${total}</b></div>
         <div><span>On time</span><b>${onTime}/${total}</b></div>
-        <div><span>Cash remaining</span><b>${fmtMoney(this.cash)}</b></div>
+        <div><span>Cash</span><b>${fmtMoney(this.cash)}</b></div>
+        <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " burst" : "clean"}</b></div>
       </div>
       <button class="pBtn primary" data-act="restart"><b>Run again</b></button>`);
   }
@@ -382,10 +404,23 @@ export class World {
         <button class="pBtn primary" data-act="pour"><b>Start pour</b><span>${Math.round(st.volumeM3 / POUR_RATE_M3_PER_DAY * 10) / 10} d · paste ${fmtMoney(cost)} → ${fmtMoney(rev)} ore access</span></button>`;
     } else if (st.status === "pouring") {
       const pct = Math.round((st.placedM3 / st.volumeM3) * 100);
+      const rating = st.cls?.ratingMpa ?? 1;
+      const pfrac = Math.min(100, (st.pressureMpa / rating) * 100);
+      const margin = 1 - st.pressureMpa / rating;
+      const pcls = margin < 0.08 ? "red" : margin < 0.2 ? "amber" : "green";
+      const plugTxt = st.plugDrift > 0.5 ? "HIGH — flush!" : st.plugDrift > 0.25 ? "building" : "clear";
+      const plugCls = st.plugDrift > 0.5 ? "red" : st.plugDrift > 0.25 ? "amber" : "green";
       body = `
-        <div class="pRow">Pouring…</div>
+        <div class="pRow">Pouring · <b>${st.cls?.name}</b> · rating ${rating} MPa</div>
+        <div class="pSplit"><span>Line pressure</span><b class="${pcls === "red" ? "pLate" : ""}">${st.pressureMpa.toFixed(1)} MPa</b></div>
+        <div class="pBar"><div class="pBarFill ${pcls}" style="width:${pfrac}%"></div></div>
+        <div class="pSplit"><span>Flow <b>${st.flowFactor.toFixed(2)}×</b></span>
+          <span class="pFlow"><button class="pMini" data-act="flow-down">−</button><button class="pMini" data-act="flow-up">+</button></span></div>
+        <div class="pSplit"><span><span class="plugDot ${plugCls}"></span>Plug: ${plugTxt}</span>
+          <button class="pBtn sm" data-act="flush">💧 Flush</button></div>
         <div class="pBar"><div class="pBarFill" style="width:${pct}%"></div></div>
-        <div class="pRow muted">${Math.round(st.placedM3).toLocaleString()} / ${st.volumeM3.toLocaleString()} m³ placed (${pct}%)</div>`;
+        <div class="pRow muted">${Math.round(st.placedM3).toLocaleString()} / ${st.volumeM3.toLocaleString()} m³ (${pct}%)</div>
+        <div class="pNote">Run too slow and the paste settles into a plug (pressure climbs); push too hard and friction spikes. Keep it in the band, flush a forming plug, or burst the line.</div>`;
     } else if (st.status === "curing") {
       const pct = Math.round(this.underground.cureProgress(st, this.day) * 100);
       const daysLeft = Math.max(0, CURE_DAYS - (this.day - st.cureStartDay)).toFixed(1);
@@ -417,7 +452,13 @@ export class World {
     } else if (act === "pour") {
       if (!this.underground.startPour(st)) return;
       this.renderStopePanel();
-      this.hud.setStatus(`${st.id} pour started — placing paste. Accelerate time to run it through.`);
+      this.hud.setStatus(`${st.id} pour started — watch the pressure, keep the flow in the band.`);
+    } else if (act === "flow-up") {
+      if (st.status === "pouring") { st.flowFactor = Math.min(1.6, st.flowFactor + 0.15); this.renderStopePanel(); }
+    } else if (act === "flow-down") {
+      if (st.status === "pouring") { st.flowFactor = Math.max(0.4, st.flowFactor - 0.15); this.renderStopePanel(); }
+    } else if (act === "flush") {
+      if (st.status === "pouring") { st.plugDrift = Math.max(0, st.plugDrift - 0.6); this.hud.setStatus(`${st.id} line flushed — plug cleared, pressure eased.`); this.renderStopePanel(); }
     }
   }
 
