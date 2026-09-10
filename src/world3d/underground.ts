@@ -10,10 +10,8 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
-import {
-  PIPE_CLASSES, requiredMpa, pickClass, reticulationCost, staticHeadMpa, CURE_DAYS,
-  type PipeClass,
-} from "./backfillModel.js";
+import { CURE_DAYS, type PipeClass } from "./backfillModel.js";
+import { Reticulation } from "./reticulation.js";
 
 export type StopeStatus = "locked" | "available" | "piped" | "pouring" | "curing" | "cured";
 
@@ -64,11 +62,13 @@ function mat(scene: Scene, hex: string, emissive?: string): StandardMaterial {
 export class Underground {
   readonly root: TransformNode;
   readonly stopes: StopeUG[] = [];
+  readonly net: Reticulation;
   private selected: StopeUG | null = null;
 
   constructor(private scene: Scene, private shadow: ShadowGenerator) {
     this.root = new TransformNode("underground", scene);
     this.build();
+    this.net = new Reticulation(scene, this.root, shadow);
     this.root.setEnabled(false);
   }
 
@@ -171,35 +171,19 @@ export class Underground {
     }
   }
 
-  preview(stope: StopeUG, choke: boolean) {
-    const reqMpa = requiredMpa(stope.depthM, stope.lengthM, choke);
-    const cls = pickClass(reqMpa);
-    const cost = cls ? reticulationCost(stope.lengthM, cls) : 0;
-    return { reqMpa, headMpa: staticHeadMpa(stope.depthM), cls, cost };
-  }
-
-  reticulate(stope: StopeUG, choke: boolean): { cls: PipeClass; cost: number } | null {
-    if (stope.status !== "available") return null;
-    const { cls } = this.preview(stope, choke);
-    if (!cls) return null;
-    stope.pipes.forEach((p) => p.dispose());
-    stope.pipes = [];
-    const col = mat(this.scene, cls.color, cls.color);
-    const lv = stope.mesh.position.y - 1;
-    const sx = stope.mesh.position.x;
-    const drop = MeshBuilder.CreateCylinder("pd", { diameter: 0.8, height: Math.abs(lv) + 2, tessellation: 8 }, this.scene);
-    drop.material = col; drop.position.set(2.4, lv / 2, 0); drop.parent = this.root; stope.pipes.push(drop);
-    const run = MeshBuilder.CreateCylinder("pr", { diameter: 0.8, height: sx - 2, tessellation: 8 }, this.scene);
-    run.rotation.z = Math.PI / 2; run.material = col; run.position.set((sx + 2) / 2, lv + 2.4, 0); run.parent = this.root; stope.pipes.push(run);
-    const br = MeshBuilder.CreateCylinder("pb", { diameter: 0.8, height: 15, tessellation: 8 }, this.scene);
-    br.rotation.x = Math.PI / 2; br.material = col; br.position.set(sx, lv + 2.4, 8); br.parent = this.root; stope.pipes.push(br);
-    if (choke) {
-      const ch = MeshBuilder.CreateBox("choke", { width: 2.2, height: 2.2, depth: 2.2 }, this.scene);
-      ch.material = mat(this.scene, "#ff7a3a", "#7a2f10"); ch.position.set(6, lv + 2.4, 0); ch.parent = this.root; stope.pipes.push(ch);
+  /** Commit the designed reticulation path for a stope -> it becomes pourable. */
+  commitReticulation(stopeIdx: number): { cost: number; cls: PipeClass; choke: boolean } | null {
+    const stope = this.stopes[stopeIdx];
+    if (stope.status !== "available" || !this.net.pathReady(stopeIdx)) {
+      // allow building the planned path first
+      if (stope.status !== "available" || !this.net.pathCanBuild(stopeIdx)) return null;
     }
-    stope.cls = cls; stope.choke = choke; stope.status = "piped";
+    const cost = this.net.buildPath(stopeIdx);
+    const weak = this.net.pathWeakest(stopeIdx);
+    if (!weak) return null;
+    stope.cls = weak.cls; stope.choke = weak.choke; stope.status = "piped";
     (stope.mesh.material as StandardMaterial).diffuseColor = Color3.FromHexString(STATUS_COLOR.piped);
-    return { cls, cost: reticulationCost(stope.lengthM, cls) };
+    return { cost, cls: weak.cls, choke: weak.choke };
   }
 
   /** Begin a timed pour (m³ placed over game-time by World). */
@@ -226,5 +210,3 @@ export class Underground {
     this.paint(stope, 0);
   }
 }
-
-export { PIPE_CLASSES };

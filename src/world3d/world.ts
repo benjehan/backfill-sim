@@ -176,12 +176,12 @@ export class World {
     this.camera.setTarget(new Vector3(30, -30, 7));
     this.camera.radius = 104; this.camera.beta = 1.04; this.camera.alpha = Math.PI * 0.42;
     this.hud.setMode("underground");
-    this.hud.setPanel(`<div class="panelHint">Click a stope to reticulate and fill it.</div>`);
+    this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`);
   }
 
   private ascend() {
     this.mode = "surface";
-    this.underground.select(null); this.selectedStope = null;
+    this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null;
     this.underground.root.setEnabled(false);
     this.surfaceRoot.setEnabled(true);
     this.setSky(false);
@@ -374,6 +374,7 @@ export class World {
 
   private selectStope(st: StopeUG) {
     this.underground.select(st);
+    this.underground.net.highlightPath(this.underground.stopes.indexOf(st));
     this.selectedStope = st;
     this.renderStopePanel();
   }
@@ -388,15 +389,27 @@ export class World {
     if (st.status === "locked") {
       body = `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
     } else if (st.status === "available") {
-      const noChoke = this.underground.preview(st, false);
-      const withChoke = this.underground.preview(st, true);
-      const opt = (label: string, p: ReturnType<Underground["preview"]>, act: string, extra = 0) => p.cls
-        ? `<button class="pBtn" data-act="${act}"><b>${label}: ${p.cls.name}</b><span>needs ${p.reqMpa.toFixed(1)} MPa · ${fmtMoney(p.cost + extra)}</span></button>`
-        : `<button class="pBtn" disabled><b>${label}: exceeds Sch 120</b><span>too much head</span></button>`;
+      const net = this.underground.net;
+      const idx = this.underground.stopes.indexOf(st);
+      const rows = net.pathFor(idx).map((seg) => {
+        const p = net.pressureMpa(seg);
+        const c = net.cls(seg);
+        const ok = net.valid(seg);
+        const choke = seg.kind === "borehole"
+          ? `<button class="segMini ${seg.choke ? "on" : ""}" data-act="choke:${seg.id}" ${seg.built ? "disabled" : ""} title="choke station">⌇</button>` : "";
+        return `<div class="segRow ${seg.built ? "built" : ""}">
+          <div class="segMain"><b>${seg.label}</b><span>holds ${p.toFixed(1)} MPa · ${Math.round(seg.lengthM)} m</span></div>
+          <button class="segMini cls" data-act="seg:${seg.id}" ${seg.built ? "disabled" : ""}>${c ? c.name : "— set —"}</button>
+          ${choke}
+          <span class="segChk ${c ? (ok ? "ok" : "bad") : ""}">${c ? (ok ? "✓" : "✗") : "·"}</span>
+        </div>`;
+      }).join("");
+      const canBuild = net.pathCanBuild(idx);
+      const planned = net.pathPlannedCost(idx);
       body = `
-        ${opt("Reticulate", noChoke, "reticulate")}
-        ${opt("With choke station", withChoke, "reticulate-choke", CHOKE_CAPEX)}
-        <div class="pNote">Deeper stopes carry more static head, forcing a stronger pipe class. A choke station burns off head so a cheaper class survives.</div>`;
+        <div class="pNote">Design each leg: pick a class that out-rates its pressure. Deeper legs carry more head — a borehole ⌇ choke relieves everything below it. Legs are shared between stopes.</div>
+        <div class="segList">${rows}</div>
+        <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : "set a valid class on every leg"}</span></button>`;
     } else if (st.status === "piped") {
       const cost = fillCost(st.volumeM3), rev = fillRevenue(st.volumeM3);
       body = `
@@ -437,18 +450,20 @@ export class World {
   private onPanelAction(act: string) {
     if (act === "restart") { location.reload(); return; }
     const st = this.selectedStope;
-    if (act === "close") { this.underground.select(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to reticulate and fill it.</div>`); return; }
+    if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;
-    if (act === "reticulate" || act === "reticulate-choke") {
+    if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
+    if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
+    if (act === "build") {
       if (st.status !== "available") return;
-      const choke = act === "reticulate-choke";
-      const p = this.underground.preview(st, choke);
-      if (!p.cls) { this.hud.setStatus("Too much static head for Sch 120 — add a choke station."); return; }
-      const total = p.cost + (choke ? CHOKE_CAPEX : 0);
-      if (this.cash < total) { this.hud.setStatus(`Not enough cash to reticulate ${st.id} (${fmtMoney(total)}).`); return; }
-      this.underground.reticulate(st, choke);
-      this.cash -= total; this.updateEconomy(); this.renderStopePanel();
-      this.hud.setStatus(`${st.id} reticulated in ${p.cls.name}${choke ? " with a choke station" : ""} — ${fmtMoney(total)}.`);
+      const idx = this.underground.stopes.indexOf(st);
+      if (!this.underground.net.pathCanBuild(idx)) { this.hud.setStatus("Every leg needs a class that out-rates its pressure."); return; }
+      const planned = this.underground.net.pathPlannedCost(idx);
+      if (this.cash < planned) { this.hud.setStatus(`Not enough cash to build the line (${fmtMoney(planned)}).`); return; }
+      const res = this.underground.commitReticulation(idx);
+      if (!res) return;
+      this.cash -= res.cost; this.updateEconomy(); this.renderStopePanel();
+      this.hud.setStatus(`${st.id} reticulation built — weakest leg ${res.cls.name}${res.choke ? " (choked)" : ""}, ${fmtMoney(res.cost)}.`);
     } else if (act === "pour") {
       if (!this.underground.startPour(st)) return;
       this.renderStopePanel();
@@ -465,7 +480,17 @@ export class World {
   /** Debug/testing hooks. */
   debugBuild(type: string, x: number, z: number) { const spec = specOf(type); this.place(spec, new Vector3(x, heightAt(x, z), z)); this.disarm(); }
   debugDescend() { this.descend(); }
-  debugReticulate(i: number, choke = false) { const st = this.underground.stopes[i]; if (st.status === "locked") st.status = "available"; this.underground.reticulate(st, choke); }
+  debugReticulate(i: number, choke = false) {
+    const st = this.underground.stopes[i]; if (st.status === "locked") st.status = "available";
+    const net = this.underground.net;
+    for (const seg of net.pathFor(i)) {
+      if (seg.built) continue;
+      if (choke && seg.kind === "borehole") seg.choke = true;
+      seg.classId = 0;
+      while (seg.classId! < 3 && !net.valid(seg)) seg.classId!++;
+    }
+    this.underground.commitReticulation(i);
+  }
   debugPour(i: number) { this.underground.startPour(this.underground.stopes[i]); }
   debugSelect(i: number) { this.selectStope(this.underground.stopes[i]); }
   debugAdvance(days: number) { this.paused = false; const step = 0.25; for (let d = 0; d < days && !this.ended; d += step) this.advanceTime((SECONDS_PER_DAY * step) / this.speed); }
