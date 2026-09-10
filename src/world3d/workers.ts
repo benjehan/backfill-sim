@@ -23,7 +23,7 @@ export class WorkerCrew {
   private workers: Worker[] = [];
   private roam: number;
 
-  constructor(private scene: Scene, count: number, roamRadius: number, private onMesh?: (m: Mesh) => void) {
+  constructor(private scene: Scene, count: number, roamRadius: number, private onMesh?: (m: Mesh) => void, private parent?: TransformNode) {
     this.roam = roamRadius;
     this.add(count);
   }
@@ -43,6 +43,7 @@ export class WorkerCrew {
 
   private make(i: number, onMesh?: (m: Mesh) => void): Worker {
     const root = new TransformNode("w" + i, this.scene);
+    if (this.parent) root.parent = this.parent;
     const vestMat = new StandardMaterial("vest" + i, this.scene);
     vestMat.diffuseColor = Color3.FromHexString(HI_VIS[i % HI_VIS.length]);
     vestMat.specularColor = Color3.Black();

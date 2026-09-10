@@ -24,11 +24,12 @@ function mat(scene: Scene, hex: string) {
 
 export class TruckFleet {
   private trucks: Truck[] = [];
-  constructor(private scene: Scene, private onMesh?: (m: Mesh) => void) {}
+  constructor(private scene: Scene, private onMesh?: (m: Mesh) => void, private parent?: TransformNode) {}
 
   add(count: number, from: Vector3, to: Vector3) {
     for (let i = 0; i < count; i++) {
       const root = new TransformNode("truck", this.scene);
+      if (this.parent) root.parent = this.parent;
       const cab = MeshBuilder.CreateBox("cab", { width: 2.2, height: 1.8, depth: 2.2 }, this.scene);
       cab.material = mat(this.scene, "#e0a52e"); cab.position.set(0, 1.9, 1.6); cab.parent = root;
       const bed = MeshBuilder.CreateBox("bed", { width: 2.6, height: 1.6, depth: 4.2 }, this.scene);
