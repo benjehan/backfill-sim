@@ -1,7 +1,9 @@
 // Scenario 1 — Tutorial / Starter mine (GDD 02): shallow, gravity flow, paste path.
 // One stope, learn the full loop: schedule -> recipe -> pour -> cure -> QAQC -> reconcile.
 
-import type { TailingsStream, PipeSpec, Stope, ChecklistItem } from "./types.js";
+import type {
+  TailingsStream, Stope, ChecklistItem, PipeClass, UdsNodeSpec, UdsSegmentSpec,
+} from "./types.js";
 
 export const TUTORIAL_STREAM: TailingsStream = {
   name: "Mill whole tailings (No.1 stream)",
@@ -11,12 +13,54 @@ export const TUTORIAL_STREAM: TailingsStream = {
   availabilityTph: 90,
 };
 
-export const PIPE_OPTIONS: PipeSpec[] = [
-  { label: "DN150 · 50 bar", diameterMm: 150, ratingMpa: 5, costPerMetre: 120 },
-  { label: "DN150 · 100 bar", diameterMm: 150, ratingMpa: 10, costPerMetre: 190 },
-  { label: "DN200 · 100 bar", diameterMm: 200, ratingMpa: 10, costPerMetre: 240 },
-  { label: "DN200 · 150 bar", diameterMm: 200, ratingMpa: 15, costPerMetre: 330 },
+// Pipe classes for the UDS routing puzzle (GDD 06). Rating governs burst;
+// diameter governs friction (bigger = less head loss, but pricier).
+export const PIPE_CLASSES: PipeClass[] = [
+  { label: "DN150 · 50 bar", diameterMm: 150, ratingMpa: 5, costPerMetre: 60, frictionMult: 1.0 },
+  { label: "DN150 · 100 bar", diameterMm: 150, ratingMpa: 10, costPerMetre: 95, frictionMult: 1.0 },
+  { label: "DN200 · 100 bar", diameterMm: 200, ratingMpa: 10, costPerMetre: 120, frictionMult: 0.6 },
+  { label: "DN200 · 150 bar", diameterMm: 200, ratingMpa: 15, costPerMetre: 170, frictionMult: 0.6 },
 ];
+
+// ---- UDS network topology (GDD 06): a shared borehole trunk + level runs -----
+// Shaft nodes sit on the vertical trunk; stopes hang off their level collar.
+export const UDS_NODES: UdsNodeSpec[] = [
+  { id: "plant", label: "PLANT", depthM: 0, xM: 0, kind: "plant", canStation: false },
+  { id: "c150", label: "L1 collar", depthM: 150, xM: 0, kind: "collar", canStation: true },
+  { id: "c300", label: "L2 collar", depthM: 300, xM: 0, kind: "collar", canStation: true },
+  { id: "c450", label: "L3 collar", depthM: 450, xM: 0, kind: "collar", canStation: true },
+  { id: "s150-1", label: "150-1", depthM: 150, xM: 170, kind: "stope", stopeId: "150-1", canStation: false },
+  { id: "s150-2", label: "150-2", depthM: 150, xM: 210, kind: "stope", stopeId: "150-2", canStation: false },
+  { id: "s300-1", label: "300-1", depthM: 300, xM: 200, kind: "stope", stopeId: "300-1", canStation: false },
+  { id: "s300-2", label: "300-2", depthM: 300, xM: 240, kind: "stope", stopeId: "300-2", canStation: false },
+  { id: "s450-1", label: "450-1", depthM: 450, xM: 250, kind: "stope", stopeId: "450-1", canStation: false },
+  { id: "s450-2", label: "450-2", depthM: 450, xM: 270, kind: "stope", stopeId: "450-2", canStation: false },
+];
+
+export const UDS_SEGMENTS: UdsSegmentSpec[] = [
+  { id: "bh150", from: "plant", to: "c150", kind: "borehole", lengthM: 150, depthChangeM: 150 },
+  { id: "bh300", from: "c150", to: "c300", kind: "borehole", lengthM: 150, depthChangeM: 150 },
+  { id: "bh450", from: "c300", to: "c450", kind: "borehole", lengthM: 150, depthChangeM: 150 },
+  { id: "l150a", from: "c150", to: "s150-1", kind: "level", lengthM: 170, depthChangeM: 0 },
+  { id: "l150b", from: "c150", to: "s150-2", kind: "level", lengthM: 210, depthChangeM: 0 },
+  { id: "l300a", from: "c300", to: "s300-1", kind: "level", lengthM: 200, depthChangeM: 0 },
+  { id: "l300b", from: "c300", to: "s300-2", kind: "level", lengthM: 240, depthChangeM: 0 },
+  { id: "l450a", from: "c450", to: "s450-1", kind: "level", lengthM: 250, depthChangeM: 0 },
+  { id: "l450b", from: "c450", to: "s450-2", kind: "level", lengthM: 270, depthChangeM: 0 },
+];
+
+// Ordered segment ids from the plant to each stope.
+const PATHS: Record<string, string[]> = {
+  "150-1": ["bh150", "l150a"],
+  "150-2": ["bh150", "l150b"],
+  "300-1": ["bh150", "bh300", "l300a"],
+  "300-2": ["bh150", "bh300", "l300b"],
+  "450-1": ["bh150", "bh300", "bh450", "l450a"],
+  "450-2": ["bh150", "bh300", "bh450", "l450b"],
+};
+export function pathSegmentsFor(stopeId: string): string[] { return PATHS[stopeId] ?? []; }
+export function segmentById(id: string): UdsSegmentSpec { return UDS_SEGMENTS.find((s) => s.id === id)!; }
+export function nodeById(id: string): UdsNodeSpec { return UDS_NODES.find((n) => n.id === id)!; }
 
 export const TUTORIAL_STOPE: Stope = {
   id: "150-1",
@@ -63,7 +107,7 @@ export const BLAST_WINDOWS: BlastWindow[] = [
 
 export const CAMPAIGN = {
   horizonDay: 90,        // board review at day 90 (GDD 03: 90-day visible plan)
-  budget: 240_000,       // cost-centre budget to defend (GDD 09)
+  budget: 340_000,       // cost-centre budget to defend: binder opex + UDS capex (GDD 09)
   startMood: 70,         // mine manager mood 0..100
   lateCostPerDay: 1_800, // stalled mining cost per late stope per day
 };

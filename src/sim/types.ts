@@ -91,6 +91,76 @@ export interface UcsResult {
   pass: boolean;
 }
 
+// ---- UDS reticulation (GDD 06) --------------------------------------------
+
+export interface PipeClass {
+  label: string;
+  diameterMm: number;
+  ratingMpa: number;
+  costPerMetre: number;
+  frictionMult: number; // bigger pipe = less friction
+}
+
+export interface UdsNodeSpec {
+  id: string;
+  label: string;
+  depthM: number;
+  xM: number; // horizontal distance from the shaft (m)
+  kind: "plant" | "collar" | "stope";
+  stopeId?: string;
+  canStation: boolean; // can host a choke / booster
+}
+
+export interface UdsSegmentSpec {
+  id: string;
+  from: string;
+  to: string;
+  kind: "borehole" | "level";
+  lengthM: number;
+  depthChangeM: number;
+}
+
+export type Station = "choke" | "booster" | null;
+
+export interface SegProfile {
+  segId: string;
+  classIndex: number | null;
+  station: Station;   // applied at the head of the segment
+  headP: number;      // pressure entering the segment (pre-station)
+  startP: number;     // pressure after any station, at the segment start
+  endP: number;
+  maxP: number;
+  ratingMpa: number;
+  burst: boolean;
+  slack: boolean;
+}
+
+export interface PathNode { id: string; depthM: number; xM: number; P: number; }
+
+export interface PathProfile {
+  segs: SegProfile[];
+  nodes: PathNode[];
+  peakP: number;
+  minRating: number;
+  deliveredP: number;
+  allBuilt: boolean;
+  burst: boolean;
+  slack: boolean;
+  reticulated: boolean; // built + valid + delivers
+  issue: string;        // human-readable first problem, "" if fine
+}
+
+// A resolved line handed to the recipe evaluator.
+export interface LineProfile {
+  ratingMpa: number;
+  peakPressureMpa: number;
+  frictionLossMpa: number;
+  staticHeadMpa: number;
+  slack: boolean;
+  delivered: boolean;
+  reticulated: boolean;
+}
+
 export interface Kpis {
   volumePlacedM3: number;
   volumePlannedM3: number;

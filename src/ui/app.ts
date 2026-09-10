@@ -196,21 +196,24 @@ export class App {
     const g = this.game;
     return `
       <div class="card">
-        <h3>${term("pour-note", "Design the mix")} <span class="hint">${g.mode}</span></h3>
+        <h3>① Build the line (${term("hgl", "UDS")}) <span class="hint">${g.mode}</span></h3>
         ${this.stopeHeader()}
+        <p class="muted small">Click a pipe on the section to set its class (rating &amp; bore). Click the ring at a pipe's head to drop a choke (cuts head) or a booster. Stage cheap pipe up high, strong pipe deep, or choke the deep leg to run it cheap.</p>
+        <div id="lineStatus"></div>
+        <div class="row"><button class="btn" data-action="autoLine">✨ Auto-line (safe)</button></div>
+
+        <h3 style="margin-top:16px">② Mix (recipe)</h3>
         <label class="slider"><span>Solids concentration <b id="dSolidsVal"></b></span>
           <input type="range" id="sSolids" min="66" max="82" step="0.5" value="${g.recipe.solids * 100}">
           <small>${term("yield-stress", "yield stress")} rises steeply past 78%</small></label>
         <label class="slider"><span>${term("binder", "Binder dose")} <b id="dBinderVal"></b></span>
           <input type="range" id="sBinder" min="60" max="450" step="5" value="${g.recipe.binderKgPerM3}">
           <small>~70% of opex — deeper stopes want more strength</small></label>
-        <label class="field"><span>Pipe (${term("rating", "diameter & rating")})</span>
-          <select id="selPipe">${g.pipeOptions.map((p, i) => `<option value="${i}" ${p === g.pipe ? "selected" : ""}>${p.label}</option>`).join("")}</select></label>
         <label class="field"><span>Target flow (m³/h)</span>
           <input type="number" id="inFlow" min="10" max="80" step="5" value="${g.pourNote.targetFlowM3h}"></label>
         <div id="designReadout"></div>
         <div class="row"><button class="btn" data-action="autoRecipe">✨ Auto-recipe</button></div>
-        <button class="btn primary big" data-action="toPrepour">Issue pour note →</button>
+        <button class="btn primary big" data-action="toPrepour" id="btnProceed">Issue pour note →</button>
         <button class="btn ghost" data-action="backBoard">← back to the board</button>
       </div>`;
   }
@@ -303,6 +306,24 @@ export class App {
     const ev = g.evalRecipe(st);
     setText("dSolidsVal", `${(g.recipe.solids * 100).toFixed(1)}%`);
     setText("dBinderVal", `${g.recipe.binderKgPerM3} kg/m³`);
+
+    // ---- line status ----
+    const pp = g.designProfile(st.spec.id);
+    const cost = g.plannedLineCost(st.spec.id);
+    const ls = document.getElementById("lineStatus");
+    if (ls) {
+      const statusCls = pp.reticulated ? "ok" : "";
+      const statusTxt = !pp.allBuilt ? `Incomplete — ${pp.issue}` : pp.burst ? `⚠ ${pp.issue}` : pp.slack ? `⚠ ${pp.issue}` : pp.reticulated ? `✓ Line good — peak ${pp.peakP.toFixed(1)} MPa, delivers ${pp.deliveredP.toFixed(1)} MPa` : pp.issue;
+      ls.innerHTML = `<div class="warnbox ${statusCls}">${statusTxt}</div>
+        <div class="lineCost"><span>Line capex to build</span><b>${cost > 0 ? "$" + cost.toLocaleString() : "— (already built)"}</b></div>`;
+    }
+    const proceed = document.getElementById("btnProceed") as HTMLButtonElement | null;
+    if (proceed) {
+      const ready = pp.reticulated;
+      proceed.disabled = !ready;
+      proceed.textContent = ready ? "Issue pour note →" : "Build a valid line first";
+    }
+
     const ro = document.getElementById("designReadout"); if (!ro) return;
     const ucsOk = ev.ucs28Predicted >= st.spec.targetUcsKpa;
     const pressOk = ev.peakPressureMpa <= ev.ratingMpa;
@@ -336,7 +357,7 @@ export class App {
     const st = g.activeStope(); if (!st) return;
     const ev = g.evalRecipe(st);
     const names: Record<string, string> = { "water-test": "① Water test", "line-fill": `② ${term("low-solids-start", "Low-solids line fill")}`, main: "③ Main recipe", done: "Done" };
-    setText("subPhase", names[p.subPhase] ?? "");
+    const sub = document.getElementById("subPhase"); if (sub) sub.innerHTML = names[p.subPhase] ?? "";
     setText("flowVal", `${p.currentFlowM3h.toFixed(0)} m³/h`);
     const margin = (ev.ratingMpa - p.pressureMpa) / ev.ratingMpa;
     const pressColor = p.pressureMpa > ev.ratingMpa ? "red" : margin < 0.15 ? "amber" : "green";
@@ -362,8 +383,6 @@ export class App {
     if (g.view === "pour" && g.pourPhase === "design") {
       bindRange("sSolids", (v) => { g.recipe.solids = v / 100; this.patchDesign(); this.refreshSection(); });
       bindRange("sBinder", (v) => { g.recipe.binderKgPerM3 = v; this.patchDesign(); this.refreshSection(); });
-      const pipe = document.getElementById("selPipe") as HTMLSelectElement | null;
-      pipe?.addEventListener("change", () => { g.pipe = g.pipeOptions[+pipe.value]; this.patchDesign(); this.refreshSection(); });
       const flow = document.getElementById("inFlow") as HTMLInputElement | null;
       flow?.addEventListener("change", () => { g.pourNote.targetFlowM3h = +flow.value; });
     }
@@ -383,7 +402,10 @@ export class App {
       case "select": g.selectStope(t.dataset.id!); break;
       case "backBoard": g.backToBoard(); break;
       case "skip3": g.skipDays(3); break;
-      case "autoRecipe": g.recipe = autoRecipe(g.stream, g.pipe, g.activeStope()!.spec); this.remountDesign(); break;
+      case "seg": g.cycleSegment(t.dataset.id!); this.patchDesign(); this.refreshSection(); break;
+      case "station": g.toggleStation(t.dataset.id!); this.patchDesign(); this.refreshSection(); break;
+      case "autoLine": g.autoLine(g.activeStope()!.spec.id); this.patchDesign(); this.refreshSection(); break;
+      case "autoRecipe": g.recipe = autoRecipe(g.activeStope()!.spec); this.remountDesign(); break;
       case "toPrepour": g.proceedToPrepour(); break;
       case "backDesign": g.backToDesign(); break;
       case "check": g.toggleChecklist(t.dataset.key!); break;

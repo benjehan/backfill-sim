@@ -3,8 +3,6 @@
 // real pipe ratings, real cure curve. All numbers in real units.
 
 import {
-  G,
-  PASTE_DENSITY,
   PASTE_SOLIDS_MIN,
   PASTE_SOLIDS_MAX,
   UCS_PLUG_MIN_KPA,
@@ -16,7 +14,7 @@ import type {
   TailingsStream,
   Recipe,
   RecipeEval,
-  PipeSpec,
+  LineProfile,
   Stope,
 } from "./types.js";
 
@@ -34,11 +32,6 @@ export function frictionKpaPerM(
   const tau = yieldStressKpa(stream, solids);
   // Base friction scales with yield stress; small floor keeps a full line honest.
   return 2.0 + tau * 0.9;
-}
-
-// Static head from the vertical drop: ρgh (GDD 06). Returns MPa.
-export function staticHeadMpa(verticalDropM: number): number {
-  return (PASTE_DENSITY * G * verticalDropM) / 1e6;
 }
 
 // Predicted 28-day UCS (kPa). Grows with binder dose, penalised if too dilute
@@ -65,11 +58,11 @@ export function cureFraction(ageDays: number): number {
   return Math.min(1, f);
 }
 
-// Full recipe evaluation against a stope + chosen pipe (GDD 04/06/09).
+// Full recipe evaluation against a stope and its built UDS line (GDD 04/06/09).
 export function evaluateRecipe(
   stream: TailingsStream,
   recipe: Recipe,
-  pipe: PipeSpec,
+  line: LineProfile,
   stope: Stope,
 ): RecipeEval {
   const warnings: string[] = [];
@@ -77,14 +70,12 @@ export function evaluateRecipe(
 
   const yieldStress = yieldStressKpa(stream, solids);
   const friction = frictionKpaPerM(stream, solids);
-  const staticHead = staticHeadMpa(stope.verticalDropM);
-  const frictionLoss = (friction * stope.runLengthM) / 1000; // kPa/m * m -> kPa -> MPa
+  const staticHead = line.staticHeadMpa;
+  const frictionLoss = line.frictionLossMpa;
 
-  // Peak pressure the line sees ~ static head that must be dissipated by friction.
-  // If friction can't consume the gravity head over the run, the excess shows up
-  // as pressure at the base of the borehole (worst case near the pipe rating).
-  const peakPressure = Math.max(staticHead, frictionLoss);
-  const rating = pipe.ratingMpa;
+  // Pressure profile comes from the built network (peak point vs weakest rating).
+  const peakPressure = line.peakPressureMpa;
+  const rating = line.ratingMpa || 1;
   const hglMargin = (rating - peakPressure) / rating;
 
   // Regime + feasibility (GDD 06): too thick => plug risk; too thin => slack/segregation.
@@ -95,21 +86,23 @@ export function evaluateRecipe(
       `Mix is thick (${(solids * 100).toFixed(0)}% solids, ${friction.toFixed(1)} kPa/m) — plug risk climbing.`,
     );
   }
-  if (solids < PASTE_SOLIDS_MIN) {
+  if (solids < PASTE_SOLIDS_MIN || line.slack) {
     regime = "slack-risk";
-    warnings.push(
-      `Mix is dilute (${(solids * 100).toFixed(0)}% solids) — segregation & slack-flow risk, UCS may miss.`,
-    );
+    if (solids < PASTE_SOLIDS_MIN)
+      warnings.push(`Mix is dilute (${(solids * 100).toFixed(0)}% solids) — segregation & slack-flow risk, UCS may miss.`);
+    if (line.slack)
+      warnings.push(`The line runs slack — free-fall and wear. Use bigger pipe or ease a choke.`);
   }
 
-  if (peakPressure > rating) {
-    warnings.push(
-      `Peak pressure ${peakPressure.toFixed(1)} MPa EXCEEDS pipe rating ${rating} MPa — line will not hold.`,
-    );
+  if (line.ratingMpa === 0) {
+    warnings.push(`No line to this stope yet — build the UDS reticulation.`);
+  } else if (peakPressure > rating) {
+    warnings.push(`Peak pressure ${peakPressure.toFixed(1)} MPa EXCEEDS line rating ${rating} MPa — it will burst.`);
   } else if (hglMargin < 0.15) {
-    warnings.push(
-      `HGL within ${(hglMargin * 100).toFixed(0)}% of rating — little margin for transients.`,
-    );
+    warnings.push(`HGL within ${(hglMargin * 100).toFixed(0)}% of rating — little margin for transients.`);
+  }
+  if (line.ratingMpa > 0 && !line.delivered) {
+    warnings.push(`Line doesn't deliver to the stope — add head (booster) or reduce friction.`);
   }
 
   const ucs28 = ucs28Predicted(recipe);
@@ -131,7 +124,7 @@ export function evaluateRecipe(
   const costPerM3 = binderCostPerM3 + otherOpexPerM3;
   const binderCostShare = binderCostPerM3 / costPerM3;
 
-  const feasible = peakPressure <= rating && ucs28 >= stope.targetUcsKpa;
+  const feasible = line.reticulated && ucs28 >= stope.targetUcsKpa;
 
   return {
     yieldStressKpa: yieldStress,
@@ -139,7 +132,7 @@ export function evaluateRecipe(
     staticHeadMpa: staticHead,
     frictionLossMpa: frictionLoss,
     peakPressureMpa: peakPressure,
-    ratingMpa: rating,
+    ratingMpa: line.ratingMpa,
     hglMargin,
     regime,
     ucs28Predicted: ucs28,
@@ -150,30 +143,13 @@ export function evaluateRecipe(
   };
 }
 
-// Auto-recipe helper (GDD 04): lowest-binder recipe that hits target UCS + is feasible.
-// Manager mode uses this; engineers can override.
-export function autoRecipe(
-  stream: TailingsStream,
-  pipe: PipeSpec,
-  stope: Stope,
-): Recipe {
-  // Design conservatism (GDD 04): the helper aims 15% above target so the mix
-  // reliably passes at 28 days despite variance. Engineers can trim closer to
-  // the edge manually to save binder — accepting the delayed-consequence risk.
-  const designTarget = stope.targetUcsKpa * 1.15;
-  let best: Recipe | null = null;
-  for (let solids = 0.70; solids <= 0.79; solids += 0.005) {
-    for (let binder = 60; binder <= 400; binder += 5) {
-      const r: Recipe = {
-        solids: +solids.toFixed(3),
-        binderKgPerM3: binder,
-      };
-      const e = evaluateRecipe(stream, r, pipe, stope);
-      if (e.peakPressureMpa <= e.ratingMpa && e.ucs28Predicted >= designTarget) {
-        if (!best || r.binderKgPerM3 < best.binderKgPerM3) best = r;
-        break; // lowest binder at this solids found
-      }
-    }
-  }
-  return best ?? { solids: 0.76, binderKgPerM3: 220 };
+// Auto-recipe helper (GDD 04): lowest-binder recipe that clears the target UCS
+// with a 15% design margin at safe design solids. Manager mode uses this; the
+// engineer trims closer to the edge to save binder, accepting the variance risk.
+export function autoRecipe(stope: Stope): Recipe {
+  const solids = 0.76; // solidsFactor = 1.0 at/above this
+  const designUcs = stope.targetUcsKpa * 1.15;
+  // Invert ucs28Predicted = 5.0 * binder^0.95 (solidsFactor 1.0).
+  const binder = Math.ceil(Math.pow(designUcs / 5.0, 1 / 0.95) / 5) * 5;
+  return { solids, binderKgPerM3: Math.max(60, Math.min(450, binder)) };
 }
