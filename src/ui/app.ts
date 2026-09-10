@@ -6,12 +6,21 @@ import { autoRecipe } from "../sim/physics.js";
 import { stageSvg } from "./sectionView.js";
 import { term } from "./handbook.js";
 import { CAMPAIGN } from "../sim/scenario.js";
+import { Plant } from "../plant/model.js";
+import { PlantView } from "./plantView.js";
+
+type Screen = "mine" | "plant";
 
 export class App {
   private root: HTMLElement;
   private game: Game;
   private mountedKey = "";
   private tip!: HTMLElement;
+
+  // the surface-plant builder lives on its own screen, toggled from the topbar
+  private screen: Screen = "mine";
+  private plant = new Plant();
+  private plantView: PlantView | null = null;
 
   constructor(root: HTMLElement, game: Game) {
     this.root = root;
@@ -27,6 +36,7 @@ export class App {
       <div id="topbar"></div>
       <div id="stage"><div id="section"></div><div id="stageOverlay"></div></div>
       <div id="panel"></div>
+      <div id="plantScreen"></div>
       <div id="modal" class="modal-wrap hidden"></div>
       <div id="tooltip" class="tooltip hidden"></div>`;
     this.tip = document.getElementById("tooltip")!;
@@ -57,7 +67,29 @@ export class App {
 
   // ---- sync -----------------------------------------------------------------
 
+  // ---- screen switch (mine campaign <-> surface-plant builder) --------------
+
+  private setScreen(s: Screen) {
+    if (s === this.screen) return;
+    this.screen = s;
+    if (s === "plant") {
+      this.game.paused = true; // freeze the campaign clock while you build
+      this.root.classList.add("showPlant");
+      this.renderTopbar();
+      this.plantView = new PlantView(document.getElementById("plantScreen")!, this.plant);
+    } else {
+      this.plantView?.destroy();
+      this.plantView = null;
+      this.root.classList.remove("showPlant");
+      this.mountedKey = ""; // force a full campaign remount
+      this.sync();
+    }
+  }
+
+  private renderTopbar() { document.getElementById("topbar")!.innerHTML = this.topbar(); }
+
   private sync() {
+    if (this.screen === "plant") return; // PlantView drives its own screen
     const g = this.game;
     const boardSig = `${g.day}|${Math.round(g.mood)}|${g.stopes.map((s) => s.status).join("")}|${g.log.length}`;
     const prepourSig = g.pourPhase === "prepour"
@@ -101,7 +133,11 @@ export class App {
   private topbar(): string {
     const g = this.game;
     return `
-      <div class="brand">BACKFILL <span>SIM</span> <em>· Wheal Verity</em></div>
+      <div class="brand">CUT &amp; <span>FILL</span> <em>· Wheal Verity</em></div>
+      <div class="screenToggle">
+        <button data-action="screen" data-s="mine" class="btn ${this.screen === "mine" ? "on" : ""}">⛏ Mine</button>
+        <button data-action="screen" data-s="plant" class="btn ${this.screen === "plant" ? "on" : ""}">🏭 Plant</button>
+      </div>
       <div class="clock"><span id="clockDay">Day ${g.day}</span><span class="muted" id="clockHorizon">of ${CAMPAIGN.horizonDay}</span></div>
       <div class="mini"><span class="miniLabel">Budget</span><div class="miniTrack"><div id="spendBar" class="miniFill green"></div></div><b id="spendVal"></b></div>
       <div class="mini"><span class="miniLabel">Mgr mood</span><div class="miniTrack"><div id="moodBar" class="miniFill amber"></div></div><b id="moodVal"></b></div>
@@ -396,6 +432,7 @@ export class App {
     if (!t) return;
     const g = this.game;
     switch (t.dataset.action!) {
+      case "screen": this.setScreen(t.dataset.s as Screen); break;
       case "mode": g.mode = t.dataset.m as any; g.touch(); break;
       case "pause": g.paused = !g.paused; g.touch(); break;
       case "speed": g.speedIndex = +t.dataset.i!; g.paused = false; g.touch(); break;
