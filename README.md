@@ -50,7 +50,16 @@ DOM (dashboards). If a future v2 wants a 3D cutaway, the sim brain ports unchang
 Real-number anchors (GDD 04/06/09): paste 70–80% solids, ρ≈1800 kg/m³, friction 3–8 kPa/m,
 pipe ratings 50/100/150 bar, UCS design ages 7/28 days, binder ≈70% of opex.
 
-## Run it
+## Play it
+
+**Live:** https://benjehan.github.io/backfill-sim/ (passcode-gated). Every push to `main`
+auto-builds and deploys via GitHub Actions (`.github/workflows/deploy.yml`).
+
+The passcode gate is client-side only (a SHA-256 hash of the code ships in the bundle;
+unlock is cached in `localStorage`). It keeps casual visitors out — it is **not**
+server-side security. Change the code by updating `PASS_HASH` in `src/main.ts`.
+
+## Run it locally
 
 ```bash
 npm install
