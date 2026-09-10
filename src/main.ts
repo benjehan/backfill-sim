@@ -1,5 +1,4 @@
-import { Game } from "./sim/state.js";
-import { App } from "./ui/app.js";
+import { World } from "./world3d/world.js";
 
 // Passcode gate. We store only a SHA-256 hash of the code, never the plaintext.
 // This is light protection (obscures a static site from casual visitors) — it is
@@ -21,9 +20,7 @@ function startGame() {
   root.classList.remove("locked");
   const gate = document.getElementById("gate");
   if (gate) gate.remove();
-  const game = new Game();
-  new App(root, game);
-  (window as any).__game = game; // exposed for debugging / headless testing
+  new World(root).start();
 }
 
 async function tryUnlock(code: string): Promise<boolean> {
