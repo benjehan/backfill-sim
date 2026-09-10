@@ -442,6 +442,12 @@ select, input[type=number] {
 .schCounts { font-size: 11px; color: #dbe6f0; margin-top: 5px; }
 .schCounts span { color: var(--muted); margin-left: 4px; }
 .whStat b.bad, .whCash.bad { color: var(--red); }
+.binderStat { display: flex; flex-direction: column; align-items: flex-end; position: relative; padding-right: 30px; }
+.binderTrack { width: 70px; height: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.binderFill { height: 100%; background: var(--green); transition: width .2s; }
+.binderFill.amber { background: var(--amber); } .binderFill.red { background: var(--red); }
+.whTopup { position: absolute; right: 6px; top: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; font-size: 13px; cursor: pointer; pointer-events: auto; }
+.whTopup:hover { border-color: var(--accent); }
 
 /* board-review result modal */
 .whResult { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: rgba(4,10,16,.8); pointer-events: auto; backdrop-filter: blur(4px); }

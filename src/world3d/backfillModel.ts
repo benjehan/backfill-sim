@@ -62,6 +62,13 @@ export const HORIZON_DAY = 60;          // campaign horizon
 export const LATE_COST_PER_DAY = 120_000; // per overdue, unfilled available stope
 export const BASE_OPEX_PER_DAY = 40_000;  // fixed site running cost
 
+// Binder supply (course: silos up to ~4000 t; binder ~70% of opex; silo capacity
+// vs delivery lead time is the eternal squeeze).
+export const BINDER_SILO_CAP = 4000;        // tonnes
+export const BINDER_DELIVERY_PER_DAY = 400; // rail replenishment
+export const BINDER_TOPUP_TONNES = 1500;    // emergency truck top-up
+export const BINDER_TOPUP_COST = 400_000;   // short lead, premium price
+
 /** Compact money format: $1.8m / $850k / $420. */
 export function fmtMoney(n: number): string {
   const s = n < 0 ? "-" : "";

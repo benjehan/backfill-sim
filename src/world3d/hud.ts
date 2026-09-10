@@ -12,6 +12,7 @@ export interface HudCallbacks {
   onSpeed: (i: number) => void;
   onLab: () => void;
   onRecipe: (solids: number, binder: number) => void;
+  onBinderTopup: () => void;
 }
 
 const SPEED_LABELS = ["1×", "2×", "4×", "8×"];
@@ -31,6 +32,8 @@ export class Hud {
   private rootEl: HTMLElement;
   private labPanel!: HTMLElement;
   private labReadoutEl!: HTMLElement;
+  private binderV!: HTMLElement;
+  private binderBar!: HTMLElement;
   private buttons = new Map<string, HTMLButtonElement>();
   private armed: string | null = null;
 
@@ -57,6 +60,9 @@ export class Hud {
       <div class="whEcon">
         <div class="whStat"><span>Cash</span><b id="whCash">$0</b></div>
         <div class="whStat"><span>Power</span><b id="whPower">0/0</b></div>
+        <div class="whStat binderStat"><span>Binder</span><b id="whBinderV">0 t</b>
+          <div class="binderTrack"><div id="binderBar" class="binderFill"></div></div>
+          <button class="whTopup" id="whTopup" title="emergency truck top-up">🚚</button></div>
       </div>
       <button class="whMode" id="whMode">⛏ Go underground</button>
       <div class="whStatus" id="whStatus">Lay out the surface. Start with a power station.</div>
@@ -88,6 +94,9 @@ export class Hud {
     const emit = () => { sV.textContent = (+inS.value).toFixed(1) + "%"; bV.textContent = inB.value + " kg/m³"; cb.onRecipe(+inS.value / 100, +inB.value); };
     inS.addEventListener("input", emit); inB.addEventListener("input", emit);
     this.labReadoutEl = labReadout as HTMLElement;
+    this.binderV = root.querySelector("#whBinderV")!;
+    this.binderBar = root.querySelector("#binderBar")!;
+    root.querySelector("#whTopup")!.addEventListener("click", cb.onBinderTopup);
     root.querySelectorAll<HTMLButtonElement>(".whSpd[data-spd]").forEach((b) => {
       this.speedBtns.push(b);
       b.addEventListener("click", () => cb.onSpeed(+b.dataset.spd!));
@@ -149,6 +158,13 @@ export class Hud {
   }
 
   showResult(html: string) { this.result.innerHTML = html; this.result.classList.remove("hidden"); }
+  setBinder(tonnes: number, cap: number) {
+    this.binderV.textContent = `${Math.round(tonnes)} t`;
+    const f = Math.max(0, Math.min(100, (tonnes / cap) * 100));
+    this.binderBar.style.width = `${f}%`;
+    this.binderBar.className = `binderFill ${f < 12 ? "red" : f < 30 ? "amber" : "green"}`;
+  }
+
   setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }
   toggleLab(readout: string) { this.labPanel.classList.toggle("hidden"); if (!this.labPanel.classList.contains("hidden")) this.setLabReadout(readout); }
   setLabReadout(html: string) { this.labReadoutEl.innerHTML = html; }

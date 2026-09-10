@@ -32,6 +32,7 @@ import {
   fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
   pourPressureMpa, BURST_PENALTY,
   SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, HORIZON_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
+  BINDER_SILO_CAP, BINDER_DELIVERY_PER_DAY, BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
 
@@ -71,6 +72,7 @@ export class World {
   private ended = false;
   private opexPerDay = 0;
   private safetyIncidents = 0;
+  private binderTonnes = BINDER_SILO_CAP;
   private lastDayShown = 0;
   private get speed() { return SPEEDS[this.speedIdx]; }
 
@@ -122,6 +124,11 @@ export class World {
       onSpeed: (i) => { this.speedIdx = i; this.paused = false; this.refreshClock(); },
       onLab: () => this.hud.toggleLab(this.labReadout()),
       onRecipe: (solids, binder) => { this.recipe.solids = solids; this.recipe.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); },
+      onBinderTopup: () => {
+        if (this.cash < BINDER_TOPUP_COST) { this.hud.setStatus(`Not enough cash for a binder truck top-up (${fmtMoney(BINDER_TOPUP_COST)}).`); return; }
+        this.cash -= BINDER_TOPUP_COST; this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_TOPUP_TONNES);
+        this.updateEconomy(); this.hud.setStatus(`Binder truck top-up: +${BINDER_TOPUP_TONNES} t for ${fmtMoney(BINDER_TOPUP_COST)}.`);
+      },
     });
     this.updateEconomy();
     this.underground.updateSchedule(this.day);
@@ -266,7 +273,13 @@ export class World {
         continue;
       }
 
-      const delta = Math.min(this.pourRatePerDay() * f * dd, s.volumeM3 - s.placedM3);
+      let delta = Math.min(this.pourRatePerDay() * f * dd, s.volumeM3 - s.placedM3);
+      // binder draw from the silo — a dry silo stalls the pour
+      const need = (delta * this.recipe.binderKgPerM3) / 1000; // tonnes
+      if (need > 0 && this.binderTonnes < need) {
+        delta *= this.binderTonnes / need; this.binderTonnes = 0;
+        if (Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(`⚠ Binder silo dry — ${s.id} pour stalled. Order a truck top-up or wait for rail.`);
+      } else this.binderTonnes -= need;
       s.placedM3 += delta;
       this.cash -= recipeCostPerM3(this.recipe) * delta;
       if (s.placedM3 >= s.volumeM3) {
@@ -276,6 +289,7 @@ export class World {
       }
     }
 
+    this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_DELIVERY_PER_DAY * dd); // rail delivery
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
@@ -438,7 +452,7 @@ export class World {
     this.updateEconomy();
   }
 
-  private updateEconomy() { this.hud.setEconomy(this.cash, this.powered, this.total); }
+  private updateEconomy() { this.hud.setEconomy(this.cash, this.powered, this.total); this.hud.setBinder(this.binderTonnes, BINDER_SILO_CAP); }
 
   private updateMarker(b: Placed, showRed: boolean) {
     if (showRed && !b.marker) {
