@@ -7,7 +7,7 @@ import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 
 export const TERRAIN_SIZE = 240;
-export const PAD_RADIUS = 30; // flat build area around the origin
+export const PAD_RADIUS = 48; // flat build area around the origin
 
 /** Surface height at world (x,z). Flat within the build pad, rolling hills beyond. */
 export function heightAt(x: number, z: number): number {
@@ -17,7 +17,7 @@ export function heightAt(x: number, z: number): number {
     Math.sin((x + z) * 0.02) * 3;
   const d = Math.hypot(x, z);
   // ramp from flat (0) at the pad edge up to full hills further out
-  const flat = 1 - Math.min(1, Math.max(0, (d - PAD_RADIUS) / 45));
+  const flat = 1 - Math.min(1, Math.max(0, (d - PAD_RADIUS) / 55));
   return hills * (1 - flat);
 }
 

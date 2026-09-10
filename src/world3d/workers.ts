@@ -23,12 +23,17 @@ export class WorkerCrew {
   private workers: Worker[] = [];
   private roam: number;
 
-  constructor(private scene: Scene, count: number, roamRadius: number, onMesh?: (m: Mesh) => void) {
+  constructor(private scene: Scene, count: number, roamRadius: number, private onMesh?: (m: Mesh) => void) {
     this.roam = roamRadius;
-    const body = new StandardMaterial("worker", scene);
-    body.specularColor = Color3.Black();
-    for (let i = 0; i < count; i++) this.workers.push(this.make(i, onMesh));
+    this.add(count);
   }
+
+  /** Spawn more wandering crew (e.g. when a building that employs people is placed). */
+  add(count: number) {
+    for (let i = 0; i < count; i++) this.workers.push(this.make(this.workers.length, this.onMesh));
+  }
+
+  get count() { return this.workers.length; }
 
   private randSpot(): Vector3 {
     const a = Math.random() * Math.PI * 2;
