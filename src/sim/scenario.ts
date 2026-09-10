@@ -29,6 +29,56 @@ export const TUTORIAL_STOPE: Stope = {
   runLengthM: 320, // 150 m borehole + ~170 m on-level run to the stope
 };
 
+// ---- Campaign: the rolling stope schedule (GDD 02) ------------------------
+// Voids become available (mucked) on a staggered plan; each has a strength
+// demand that rises with depth, and a fill-by date. This is the mission board.
+// Deeper stopes carry more static head (ρgh) so they force higher-rated pipe —
+// escalating difficulty as the mine deepens (GDD 10).
+
+export interface ScheduledStope extends Stope {
+  availableDay: number; // day the void is mucked out and ready to fill
+}
+
+export const STOPE_SCHEDULE: ScheduledStope[] = [
+  { id: "150-1", name: "Stope 150-1", level: 150, volumeM3: 620, targetUcsKpa: 700, verticalDropM: 150, runLengthM: 320, availableDay: 1, dueDay: 12 },
+  { id: "150-2", name: "Stope 150-2", level: 150, volumeM3: 540, targetUcsKpa: 700, verticalDropM: 150, runLengthM: 360, availableDay: 8, dueDay: 22 },
+  { id: "300-1", name: "Stope 300-1", level: 300, volumeM3: 700, targetUcsKpa: 900, verticalDropM: 300, runLengthM: 500, availableDay: 20, dueDay: 34 },
+  { id: "300-2", name: "Stope 300-2", level: 300, volumeM3: 680, targetUcsKpa: 900, verticalDropM: 300, runLengthM: 540, availableDay: 30, dueDay: 44 },
+  { id: "450-1", name: "Stope 450-1", level: 450, volumeM3: 800, targetUcsKpa: 1100, verticalDropM: 450, runLengthM: 700, availableDay: 42, dueDay: 58 },
+  { id: "450-2", name: "Stope 450-2", level: 450, volumeM3: 760, targetUcsKpa: 1100, verticalDropM: 450, runLengthM: 720, availableDay: 52, dueDay: 70 },
+];
+
+// Blast windows on the mine side (GDD 02): a blast on the level ABOVE an active
+// pour sends a seismic trigger to the fresh fill. Telegraphed a few days ahead.
+export interface BlastWindow {
+  day: number;      // the blast fires on this day
+  level: number;    // the level being blasted
+  telegraphDay: number;
+}
+
+export const BLAST_WINDOWS: BlastWindow[] = [
+  { day: 24, level: 150, telegraphDay: 21 }, // above the 300 level pours
+  { day: 47, level: 300, telegraphDay: 44 }, // above the 450 level pours
+];
+
+export const CAMPAIGN = {
+  horizonDay: 90,        // board review at day 90 (GDD 03: 90-day visible plan)
+  budget: 240_000,       // cost-centre budget to defend (GDD 09)
+  startMood: 70,         // mine manager mood 0..100
+  lateCostPerDay: 1_800, // stalled mining cost per late stope per day
+};
+
+export const FLAVOUR: string[] = [
+  "Hoist cycling ore to surface on the main shaft.",
+  "Development crew advancing the Level 3 access drive.",
+  "Loader mucking the 300 level draw points.",
+  "Ventilation fans stepped up for the deep levels.",
+  "Survey pickup on the 150 level complete.",
+  "Diamond drill rig turning on a grade-control hole.",
+  "Shotcrete crew rehabbing a Level 2 intersection.",
+  "Mill running steady — tailings stream nominal.",
+];
+
 export function freshChecklist(): ChecklistItem[] {
   return [
     {

@@ -5,10 +5,25 @@ of a working mine, and you design the mix, build the line, run the pour, cure th
 answer for the numbers. Factorio's body, Frostpunk's event beats, Papers-Please paperwork
 with soul. Built from the GDD v1 package in `~/hermes-docs/backfill-game/gdd-v1/`.
 
-## Status: v1 vertical slice — "one full pour, start to finish"
+## Status: v1 — campaign slice ("living mine") on top of the full pour loop
 
-The first playable slice implements the **complete core loop** on the Tutorial mine
-(Wheal Verity, Stope 150-1, shallow gravity paste):
+**Slice 2 (current): the multi-stope schedule & living mine (GDD 02/03/10).**
+Wheal Verity now runs as a **campaign**: a rolling schedule of 6 stopes across three
+levels (−150/−300/−450 m) becomes available on a staggered plan. One global clock never
+stops — you fill stopes while others cure in the background, due dates bite (late fills
+stall mining: cost/day + the manager's mood), the mine blasts, hoists and develops around
+you, and **earned, telegraphed events** interrupt with real decisions (binder-rail delay,
+mill trip, geotech barricade flag, seismic-during-pour). Deeper stopes carry more static
+head (ρgh), forcing higher-rated pipe — difficulty escalates with depth. The campaign ends
+in a **board review** graded S–D across fill rate, schedule adherence, cost vs budget,
+safety and manager mood.
+
+The board is the mission control: a **living-mine section** (shaft, levels, stopes coloured
+by lifecycle) beside the **schedule board**, budget/mood meters and a mine-activity log.
+
+### Slice 1: the complete pour loop (folded in, runs per stope)
+
+Each stope you select runs the full loop from the first slice:
 
 1. **Briefing** — the mine manager hands you the stope, target UCS and due date.
 2. **Design** — tune % solids and binder dose against a real rheology curve. Live readout
@@ -62,7 +77,14 @@ Toggle Manager/Engineer top-right. Pause/1×/2×/4×/8× control time.
 ## Not yet built (next from the GDD, all scoped in the docs)
 
 - The **UDS routing puzzle** (place boreholes/pipes/boosters yourself) — the Factorio heart.
+  Today the line is abstracted to a per-stope pipe-class choice + line-prep cost.
 - The **surface plant builder** (thickener/mixer/pump choices, redundancy).
-- Multiple stopes + the rolling **90-day schedule** (mission board) and living-mine events.
+- **Crews & tactical orders** (dispatch with travel time), fatigue/morale as first-class.
+- Deeper **binder supply chain** (truck vs rail sourcing) and the **tech/IoT tree**.
 - Scenarios 2 (deep, boosters, transients) and 3 (hydraulic-to-paste brownfield).
-- Crews & tactical orders, binder supply chain, the tech/IoT tree.
+
+## Verifying
+
+`node` + Chromium drive the whole thing headlessly. The scratchpad `campaign-check.js`
+plays a full campaign end-to-end (select → design → pour → cure → events → board review)
+and asserts zero JS errors; `smoke.ts` exercises the physics/balance across recipe extremes.
