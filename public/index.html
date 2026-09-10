@@ -7,7 +7,16 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app" class="locked"></div>
+  <div id="gate">
+    <div class="gateBox">
+      <div class="gateTitle">BACKFILL <span>SIM</span></div>
+      <div class="gateSub">Wheal Verity · restricted access</div>
+      <input id="gateInput" type="password" placeholder="Passcode" autocomplete="off" spellcheck="false" />
+      <button id="gateBtn">Enter ▶</button>
+      <div id="gateErr" class="gateErr"></div>
+    </div>
+  </div>
   <script type="module" src="bundle.js"></script>
 </body>
 </html>
