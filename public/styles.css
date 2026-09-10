@@ -376,3 +376,32 @@ select, input[type=number] {
 .pBtn span { font-size: 11px; color: var(--muted); }
 .pBtn.primary span { color: #0a3322; }
 .pNote { font-size: 11px; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+.pRow.muted { color: var(--muted); }
+.pLate { color: var(--red); font-weight: 700; }
+.pBar { height: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin: 6px 0; }
+.pBarFill { height: 100%; background: var(--accent); transition: width .1s; }
+.pBarFill.cure { background: var(--green); }
+
+/* live clock + schedule */
+.whClock { position: absolute; top: 48px; left: 18px; display: flex; align-items: center; gap: 4px; }
+.whDay { background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 14px; min-width: 62px; }
+.whSpd { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer; pointer-events: auto; }
+.whSpd:hover { border-color: var(--accent); }
+.whSpd.on { background: var(--accent); color: #10202b; border-color: var(--accent); font-weight: 700; }
+.whSched { position: absolute; top: 84px; left: 18px; width: 240px; }
+.schBar { height: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.schFill { height: 100%; background: var(--accent); }
+.schCounts { font-size: 11px; color: #cdd8e2; margin-top: 4px; text-shadow: 0 1px 3px #000a; }
+.schCounts span { color: var(--muted); margin-left: 4px; }
+.whStat b.bad, .whCash.bad { color: var(--red); }
+
+/* board-review result modal */
+.whResult { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: rgba(4,10,16,.8); pointer-events: auto; backdrop-filter: blur(4px); }
+.rsHead { font-size: 16px; font-weight: 800; letter-spacing: 1px; color: var(--accent); }
+.rsGrade { font-size: 72px; font-weight: 900; width: 120px; height: 120px; display: flex; align-items: center; justify-content: center; border-radius: 16px; }
+.rsRows { display: flex; gap: 24px; }
+.rsRows div { text-align: center; }
+.rsRows span { display: block; font-size: 11px; color: var(--muted); }
+.rsRows b { font-size: 20px; }
+.whResult .pBtn { width: 200px; text-align: center; }
+.whResult .pBtn b { text-align: center; }

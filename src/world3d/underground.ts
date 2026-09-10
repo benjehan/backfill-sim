@@ -1,7 +1,7 @@
 // The 3D underground: a cutaway of the shaft, three producing levels and their
-// stopes, with the borehole trunk. You reticulate each stope (route a pipe of the
-// right pressure class for its depth) and then fill it. All economics/pressures
-// come from ./backfillModel (the course numbers).
+// stopes, with the borehole trunk. Stopes come alive on a schedule (mining
+// develops them), you reticulate + fill them, and paste cures over days. All
+// economics/pressures come from ./backfillModel (the course numbers).
 import { Scene } from "@babylonjs/core/scene";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
@@ -11,29 +11,43 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
 import {
-  PIPE_CLASSES, requiredMpa, pickClass, reticulationCost, staticHeadMpa,
+  PIPE_CLASSES, requiredMpa, pickClass, reticulationCost, staticHeadMpa, CURE_DAYS,
   type PipeClass,
 } from "./backfillModel.js";
+
+export type StopeStatus = "locked" | "available" | "piped" | "pouring" | "curing" | "cured";
 
 export interface StopeUG {
   id: string;
   mesh: Mesh;
   depthM: number;
-  lengthM: number;      // reticulation run to this stope (m)
+  lengthM: number;
   volumeM3: number;
-  state: "empty" | "piped" | "filled";
+  placedM3: number;
+  availableDay: number;
+  dueDay: number;
+  status: StopeStatus;
   cls: PipeClass | null;
   choke: boolean;
+  cureStartDay: number;
   pipes: Mesh[];
 }
 
-const UNIT_M = 7.5; // world unit -> metres (horizontal run scaling)
+const UNIT_M = 7.5;
 const LEVELS = [
   { depthM: 150, y: -18 },
   { depthM: 300, y: -36 },
   { depthM: 450, y: -54 },
 ];
-const STATE_COLOR = { empty: "#6b7076", piped: "#7d93a8", filled: "#b5822f" };
+// per-stope schedule (availableDay, dueDay), staggered by depth
+const SCHEDULE = [
+  { a: 1, d: 12 }, { a: 4, d: 18 },   // -150
+  { a: 8, d: 26 }, { a: 12, d: 32 },  // -300
+  { a: 18, d: 42 }, { a: 24, d: 50 }, // -450
+];
+const STATUS_COLOR: Record<StopeStatus, string> = {
+  locked: "#363b42", available: "#6b7076", piped: "#7d93a8", pouring: "#96793f", curing: "#b5822f", cured: "#d3a63a",
+};
 
 function mat(scene: Scene, hex: string, emissive?: string): StandardMaterial {
   const m = new StandardMaterial("um", scene);
@@ -61,11 +75,9 @@ export class Underground {
     const drive = mat(this.scene, "#4a5058");
     const steel = mat(this.scene, "#8a939c");
 
-    // rock backdrop so the workings read as carved out (sits well behind the plane)
     const back = MeshBuilder.CreateBox("rockback", { width: 96, height: 74, depth: 2 }, this.scene);
     back.material = rock; back.position.set(32, -28, -14); back.parent = this.root;
 
-    // shaft + collar + borehole trunk
     const shaft = MeshBuilder.CreateBox("shaft", { width: 7, height: 64, depth: 7 }, this.scene);
     shaft.material = mat(this.scene, "#2a2f36"); shaft.position.set(0, -28, 0); shaft.parent = this.root;
     const collar = MeshBuilder.CreateBox("collar", { width: 9, height: 2, depth: 9 }, this.scene);
@@ -74,33 +86,32 @@ export class Underground {
     trunk.material = steel; trunk.position.set(1.8, -28, 0); trunk.parent = this.root;
 
     for (const lv of LEVELS) {
-      // horizontal drive off the shaft
       const dr = MeshBuilder.CreateBox("drive" + lv.depthM, { width: 62, height: 6, depth: 6 }, this.scene);
       dr.material = drive; dr.position.set(34, lv.y, 0); dr.parent = this.root;
-      // a depth tag block (colour steps with depth for quick reading)
       const tag = MeshBuilder.CreateBox("tag" + lv.depthM, { width: 2, height: 5, depth: 6.2 }, this.scene);
       tag.material = mat(this.scene, "#31414f"); tag.position.set(3, lv.y, 0); tag.parent = this.root;
 
       for (const sx of [32, 56]) {
-        // cross-cut to the stope
         const cc = MeshBuilder.CreateBox("cc", { width: 5, height: 6, depth: 10 }, this.scene);
         cc.material = drive; cc.position.set(sx, lv.y, 8); cc.parent = this.root;
-        // the stope chamber (the void you fill)
         const chamber = MeshBuilder.CreateBox("stope", { width: 12, height: 11, depth: 12 }, this.scene);
-        chamber.material = mat(this.scene, STATE_COLOR.empty);
+        chamber.material = mat(this.scene, STATUS_COLOR.locked);
         chamber.position.set(sx, lv.y + 1, 15);
         chamber.parent = this.root;
+        chamber.outlineColor = Color3.FromHexString("#39d98a");
+        chamber.outlineWidth = 0.35;
         this.shadow.addShadowCaster(chamber);
-        const lengthM = lv.depthM + sx * UNIT_M;
         this.stopes.push({
-          id: "", mesh: chamber, depthM: lv.depthM, lengthM,
-          volumeM3: 9000 + sx * 90 + lv.depthM * 6, // ~9-16k m³
-          state: "empty", cls: null, choke: false, pipes: [],
+          id: "", mesh: chamber, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
+          volumeM3: 9000 + sx * 90 + lv.depthM * 6, placedM3: 0,
+          availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
         });
       }
     }
-    // sequential ids for readability + pick lookup
-    this.stopes.forEach((s, i) => { s.id = `S${i + 1}`; s.mesh.metadata = { stopeId: s.id }; });
+    this.stopes.forEach((s, i) => {
+      s.id = `S${i + 1}`; s.mesh.metadata = { stopeId: s.id };
+      s.availableDay = SCHEDULE[i].a; s.dueDay = SCHEDULE[i].d;
+    });
   }
 
   byMesh(m: unknown): StopeUG | null {
@@ -109,12 +120,52 @@ export class Underground {
   }
 
   select(stope: StopeUG | null) {
-    if (this.selected) (this.selected.mesh.material as StandardMaterial).emissiveColor = Color3.Black();
+    if (this.selected) this.selected.mesh.renderOutline = false;
     this.selected = stope;
-    if (stope) (stope.mesh.material as StandardMaterial).emissiveColor = Color3.FromHexString("#2b3a2f");
+    if (stope) stope.mesh.renderOutline = true;
   }
 
-  /** Preview the pressure + class + cost for a stope at a choke setting. */
+  cureProgress(stope: StopeUG, day: number): number {
+    if (stope.status === "cured") return 1;
+    if (stope.status !== "curing") return 0;
+    return Math.min(1, (day - stope.cureStartDay) / CURE_DAYS);
+  }
+
+  counts() {
+    const c = { locked: 0, available: 0, piped: 0, pouring: 0, curing: 0, cured: 0 };
+    for (const s of this.stopes) c[s.status]++;
+    return c;
+  }
+
+  /** Advance stope lifecycles to `day`: mine out locked stopes, cure filled ones,
+   *  flag overdue. Returns notable transitions for the caller to surface. */
+  updateSchedule(day: number): { newlyAvailable: StopeUG[]; newlyCured: StopeUG[]; overdue: StopeUG[] } {
+    const newlyAvailable: StopeUG[] = [], newlyCured: StopeUG[] = [], overdue: StopeUG[] = [];
+    for (const s of this.stopes) {
+      if (s.status === "locked" && day >= s.availableDay) { s.status = "available"; newlyAvailable.push(s); }
+      if (s.status === "curing" && day - s.cureStartDay >= CURE_DAYS) { s.status = "cured"; newlyCured.push(s); }
+      if ((s.status === "available" || s.status === "piped") && day > s.dueDay) overdue.push(s);
+      this.paint(s, day);
+    }
+    return { newlyAvailable, newlyCured, overdue };
+  }
+
+  private paint(s: StopeUG, day: number) {
+    const m = s.mesh.material as StandardMaterial;
+    if (s.status === "pouring") {
+      const f = Math.min(1, s.placedM3 / s.volumeM3);
+      m.diffuseColor = Color3.Lerp(Color3.FromHexString(STATUS_COLOR.piped), Color3.FromHexString(STATUS_COLOR.curing), f);
+      m.emissiveColor = Color3.FromHexString("#3a2a10").scale(f);
+    } else {
+      m.diffuseColor = Color3.FromHexString(STATUS_COLOR[s.status]);
+      const isOverdue = (s.status === "available" || s.status === "piped") && day > s.dueDay;
+      if (isOverdue) m.emissiveColor = Color3.FromHexString("#5a1414");
+      else if (s.status === "curing") m.emissiveColor = Color3.FromHexString("#3a2a10");
+      else if (s.status === "cured") m.emissiveColor = Color3.FromHexString("#2a3a1a");
+      else m.emissiveColor = Color3.Black();
+    }
+  }
+
   preview(stope: StopeUG, choke: boolean) {
     const reqMpa = requiredMpa(stope.depthM, stope.lengthM, choke);
     const cls = pickClass(reqMpa);
@@ -122,41 +173,43 @@ export class Underground {
     return { reqMpa, headMpa: staticHeadMpa(stope.depthM), cls, cost };
   }
 
-  /** Build the reticulation for a stope. Returns null if it exceeds Sch 120 (needs a choke). */
   reticulate(stope: StopeUG, choke: boolean): { cls: PipeClass; cost: number } | null {
-    const { reqMpa, cls } = this.preview(stope, choke);
+    if (stope.status !== "available") return null;
+    const { cls } = this.preview(stope, choke);
     if (!cls) return null;
     stope.pipes.forEach((p) => p.dispose());
     stope.pipes = [];
     const col = mat(this.scene, cls.color, cls.color);
     const lv = stope.mesh.position.y - 1;
     const sx = stope.mesh.position.x;
-
-    // drop down the shaft to this level
     const drop = MeshBuilder.CreateCylinder("pd", { diameter: 0.8, height: Math.abs(lv) + 2, tessellation: 8 }, this.scene);
     drop.material = col; drop.position.set(2.4, lv / 2, 0); drop.parent = this.root; stope.pipes.push(drop);
-    // run along the drive
     const run = MeshBuilder.CreateCylinder("pr", { diameter: 0.8, height: sx - 2, tessellation: 8 }, this.scene);
     run.rotation.z = Math.PI / 2; run.material = col; run.position.set((sx + 2) / 2, lv + 2.4, 0); run.parent = this.root; stope.pipes.push(run);
-    // branch into the stope
     const br = MeshBuilder.CreateCylinder("pb", { diameter: 0.8, height: 15, tessellation: 8 }, this.scene);
     br.rotation.x = Math.PI / 2; br.material = col; br.position.set(sx, lv + 2.4, 8); br.parent = this.root; stope.pipes.push(br);
-
     if (choke) {
       const ch = MeshBuilder.CreateBox("choke", { width: 2.2, height: 2.2, depth: 2.2 }, this.scene);
       ch.material = mat(this.scene, "#ff7a3a", "#7a2f10"); ch.position.set(6, lv + 2.4, 0); ch.parent = this.root; stope.pipes.push(ch);
     }
-
-    stope.cls = cls; stope.choke = choke; stope.state = "piped";
-    (stope.mesh.material as StandardMaterial).diffuseColor = Color3.FromHexString(STATE_COLOR.piped);
+    stope.cls = cls; stope.choke = choke; stope.status = "piped";
+    (stope.mesh.material as StandardMaterial).diffuseColor = Color3.FromHexString(STATUS_COLOR.piped);
     return { cls, cost: reticulationCost(stope.lengthM, cls) };
   }
 
-  fill(stope: StopeUG) {
-    stope.state = "filled";
-    const m = stope.mesh.material as StandardMaterial;
-    m.diffuseColor = Color3.FromHexString(STATE_COLOR.filled);
-    m.emissiveColor = Color3.FromHexString("#3a2a10");
+  /** Begin a timed pour (m³ placed over game-time by World). */
+  startPour(stope: StopeUG): boolean {
+    if (stope.status !== "piped") return false;
+    stope.status = "pouring"; stope.placedM3 = 0;
+    this.paint(stope, 0);
+    return true;
+  }
+
+  /** Pour complete -> paste cures over CURE_DAYS. */
+  completePour(stope: StopeUG, day: number) {
+    stope.placedM3 = stope.volumeM3;
+    stope.status = "curing"; stope.cureStartDay = day;
+    this.paint(stope, day);
   }
 }
 

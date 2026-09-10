@@ -24,12 +24,14 @@ import { WorkerCrew } from "./workers.js";
 import { TruckFleet } from "./trucks.js";
 import { Underground, type StopeUG } from "./underground.js";
 import {
-  fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa,
+  fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
+  SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, HORIZON_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
+const SPEEDS = [1, 2, 4, 8];
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; }
 
@@ -52,6 +54,15 @@ export class World {
   private powered = 0; private total = 0;
   private buildings: Placed[] = [];
   private selectedStope: StopeUG | null = null;
+
+  // live clock
+  private day = 1;
+  private paused = false;
+  private speedIdx = 1;
+  private ended = false;
+  private opexPerDay = 0;
+  private lastDayShown = 0;
+  private get speed() { return SPEEDS[this.speedIdx]; }
 
   private armed: BuildingSpec | null = null;
   private ghost: TransformNode | null = null;
@@ -85,12 +96,18 @@ export class World {
       onSelect: (t) => this.onSelect(t),
       onToggleMode: () => this.toggleMode(),
       onPanelAction: (a) => this.onPanelAction(a),
+      onPause: () => { this.paused = !this.paused; this.refreshClock(); },
+      onSpeed: (i) => { this.speedIdx = i; this.paused = false; this.refreshClock(); },
     });
     this.updateEconomy();
+    this.underground.updateSchedule(this.day);
+    this.refreshClock();
+    this.refreshSchedule();
 
     this.scene.onPointerObservable.add((pi) => this.onPointer(pi));
     this.engine.runRenderLoop(() => {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
+      this.advanceTime(dt);
       if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt); }
       this.scene.render();
     });
@@ -170,6 +187,67 @@ export class World {
     this.hud.setMode("surface");
   }
 
+  // ---- live clock -----------------------------------------------------------
+
+  private advanceTime(dt: number) {
+    if (this.paused || this.ended) return;
+    const prev = this.day;
+    this.day += (dt / SECONDS_PER_DAY) * this.speed;
+    const dd = this.day - prev;
+
+    // timed pours: place m³ over game-time, charge paste, pay ore access on completion
+    for (const s of this.underground.stopes) {
+      if (s.status !== "pouring") continue;
+      const delta = Math.min(POUR_RATE_M3_PER_DAY * dd, s.volumeM3 - s.placedM3);
+      s.placedM3 += delta;
+      this.cash -= PASTE_COST_PER_M3 * delta;
+      if (s.placedM3 >= s.volumeM3) {
+        this.underground.completePour(s, this.day);
+        this.cash += fillRevenue(s.volumeM3);
+        this.hud.setStatus(`${s.id} pour complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);
+      }
+    }
+
+    const ev = this.underground.updateSchedule(this.day);
+    this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
+    this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
+    for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
+    this.updateEconomy();
+
+    // throttled HUD refresh
+    if (Math.floor(this.day) !== this.lastDayShown) { this.lastDayShown = Math.floor(this.day); this.refreshClock(); this.refreshSchedule(); if (this.mode === "underground") this.renderStopePanel(); }
+    else if (this.mode === "underground" && this.selectedStope?.status === "pouring") this.renderStopePanel();
+
+    if (this.day >= HORIZON_DAY || this.underground.counts().cured === this.underground.stopes.length) this.endCampaign();
+  }
+
+  private refreshClock() { this.hud.setClock(this.day, this.paused, this.speedIdx, SPEEDS); }
+  private refreshSchedule() { this.hud.setSchedule(this.underground.counts(), this.day, HORIZON_DAY); }
+
+  private endCampaign() {
+    if (this.ended) return;
+    this.ended = true; this.paused = true;
+    const stopes = this.underground.stopes;
+    const total = stopes.length;
+    const cured = stopes.filter((s) => s.status === "cured").length;
+    const onTime = stopes.filter((s) => s.status === "cured" && s.cureStartDay <= s.dueDay).length;
+    let score = 0;
+    score += cured === total ? 3 : cured >= total - 1 ? 2 : cured >= total / 2 ? 1 : 0;
+    score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
+    score += this.cash > 0 ? 2 : 0;
+    score += this.cash > START_CASH * 0.3 ? 1 : 0;
+    const grade = score >= 7 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D";
+    this.hud.showResult(`
+      <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
+      <div class="rsGrade grade-${grade}">${grade}</div>
+      <div class="rsRows">
+        <div><span>Stopes cured</span><b>${cured}/${total}</b></div>
+        <div><span>On time</span><b>${onTime}/${total}</b></div>
+        <div><span>Cash remaining</span><b>${fmtMoney(this.cash)}</b></div>
+      </div>
+      <button class="pBtn primary" data-act="restart"><b>Run again</b></button>`);
+  }
+
   // ---- pointer --------------------------------------------------------------
 
   private onPointer(pi: { type: number; event: { button?: number } }) {
@@ -237,6 +315,7 @@ export class World {
     const root = spec.make(this.scene, (m) => this.shadow.addShadowCaster(m));
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     this.cash -= spec.cost;
+    this.opexPerDay += spec.opexPerDay;
     this.buildings.push({ spec, root, pos: at, marker: null });
     if (spec.spawnsWorkers) this.crew.add(spec.spawnsWorkers);
     if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
@@ -280,10 +359,13 @@ export class World {
   private renderStopePanel() {
     const st = this.selectedStope; if (!st) return;
     const head = staticHeadMpa(st.depthM);
-    const head2 = `Static head ρgh: <b>${head.toFixed(1)} MPa</b>`;
-    const meta = `<div class="pMeta">−${st.depthM} m · ${st.volumeM3.toLocaleString()} m³ · run ${Math.round(st.lengthM)} m<br>${head2}</div>`;
+    const dueLate = this.day > st.dueDay && (st.status === "available" || st.status === "piped");
+    const due = `<span class="${dueLate ? "pLate" : ""}">${dueLate ? "OVERDUE" : "due day " + st.dueDay}</span>`;
+    const meta = `<div class="pMeta">−${st.depthM} m · ${st.volumeM3.toLocaleString()} m³ · run ${Math.round(st.lengthM)} m · ${due}<br>Static head ρgh: <b>${head.toFixed(1)} MPa</b></div>`;
     let body = "";
-    if (st.state === "empty") {
+    if (st.status === "locked") {
+      body = `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
+    } else if (st.status === "available") {
       const noChoke = this.underground.preview(st, false);
       const withChoke = this.underground.preview(st, true);
       const opt = (label: string, p: ReturnType<Underground["preview"]>, act: string, extra = 0) => p.cls
@@ -293,22 +375,37 @@ export class World {
         ${opt("Reticulate", noChoke, "reticulate")}
         ${opt("With choke station", withChoke, "reticulate-choke", CHOKE_CAPEX)}
         <div class="pNote">Deeper stopes carry more static head, forcing a stronger pipe class. A choke station burns off head so a cheaper class survives.</div>`;
-    } else if (st.state === "piped") {
+    } else if (st.status === "piped") {
       const cost = fillCost(st.volumeM3), rev = fillRevenue(st.volumeM3);
       body = `
         <div class="pRow">Reticulated · <b>${st.cls?.name}</b>${st.choke ? " + choke" : ""}</div>
-        <button class="pBtn primary" data-act="fill"><b>Fill stope</b><span>paste ${fmtMoney(cost)} → unlocks ${fmtMoney(rev)} ore access</span></button>`;
+        <button class="pBtn primary" data-act="pour"><b>Start pour</b><span>${Math.round(st.volumeM3 / POUR_RATE_M3_PER_DAY * 10) / 10} d · paste ${fmtMoney(cost)} → ${fmtMoney(rev)} ore access</span></button>`;
+    } else if (st.status === "pouring") {
+      const pct = Math.round((st.placedM3 / st.volumeM3) * 100);
+      body = `
+        <div class="pRow">Pouring…</div>
+        <div class="pBar"><div class="pBarFill" style="width:${pct}%"></div></div>
+        <div class="pRow muted">${Math.round(st.placedM3).toLocaleString()} / ${st.volumeM3.toLocaleString()} m³ placed (${pct}%)</div>`;
+    } else if (st.status === "curing") {
+      const pct = Math.round(this.underground.cureProgress(st, this.day) * 100);
+      const daysLeft = Math.max(0, CURE_DAYS - (this.day - st.cureStartDay)).toFixed(1);
+      body = `
+        <div class="pRow">Curing · <b>${st.cls?.name}</b></div>
+        <div class="pBar"><div class="pBarFill cure" style="width:${pct}%"></div></div>
+        <div class="pRow muted">${pct}% cured · ${daysLeft} d to strength</div>`;
     } else {
-      body = `<div class="pRow good">✓ Filled — curing. Ore access unlocked.</div>`;
+      body = `<div class="pRow good">✓ Cured — strength reached, ore access unlocked.</div>`;
     }
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
   }
 
   private onPanelAction(act: string) {
+    if (act === "restart") { location.reload(); return; }
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to reticulate and fill it.</div>`); return; }
     if (!st) return;
     if (act === "reticulate" || act === "reticulate-choke") {
+      if (st.status !== "available") return;
       const choke = act === "reticulate-choke";
       const p = this.underground.preview(st, choke);
       if (!p.cls) { this.hud.setStatus("Too much static head for Sch 120 — add a choke station."); return; }
@@ -317,17 +414,18 @@ export class World {
       this.underground.reticulate(st, choke);
       this.cash -= total; this.updateEconomy(); this.renderStopePanel();
       this.hud.setStatus(`${st.id} reticulated in ${p.cls.name}${choke ? " with a choke station" : ""} — ${fmtMoney(total)}.`);
-    } else if (act === "fill") {
-      if (st.state !== "piped") return;
-      const cost = fillCost(st.volumeM3), rev = fillRevenue(st.volumeM3);
-      this.underground.fill(st);
-      this.cash += rev - cost; this.updateEconomy(); this.renderStopePanel();
-      this.hud.setStatus(`${st.id} filled — paste ${fmtMoney(cost)}, ore access ${fmtMoney(rev)} unlocked.`);
+    } else if (act === "pour") {
+      if (!this.underground.startPour(st)) return;
+      this.renderStopePanel();
+      this.hud.setStatus(`${st.id} pour started — placing paste. Accelerate time to run it through.`);
     }
   }
 
   /** Debug/testing hooks. */
   debugBuild(type: string, x: number, z: number) { const spec = specOf(type); this.place(spec, new Vector3(x, heightAt(x, z), z)); this.disarm(); }
   debugDescend() { this.descend(); }
-  debugStope(i: number, choke = false) { const st = this.underground.stopes[i]; this.selectStope(st); this.underground.reticulate(st, choke); this.underground.fill(st); }
+  debugReticulate(i: number, choke = false) { const st = this.underground.stopes[i]; if (st.status === "locked") st.status = "available"; this.underground.reticulate(st, choke); }
+  debugPour(i: number) { this.underground.startPour(this.underground.stopes[i]); }
+  debugSelect(i: number) { this.selectStope(this.underground.stopes[i]); }
+  debugAdvance(days: number) { this.paused = false; const step = 0.25; for (let d = 0; d < days && !this.ended; d += step) this.advanceTime((SECONDS_PER_DAY * step) / this.speed); }
 }

@@ -43,6 +43,14 @@ export const ORE_VALUE_PER_M3 = 460;    // value of the ore access each filled s
 export const fillCost = (volumeM3: number) => Math.round(volumeM3 * PASTE_COST_PER_M3);
 export const fillRevenue = (volumeM3: number) => Math.round(volumeM3 * ORE_VALUE_PER_M3);
 
+// ---- live-game constants ---------------------------------------------------
+export const SECONDS_PER_DAY = 2.6;     // real seconds per game day at 1x
+export const POUR_RATE_M3_PER_DAY = 6000; // plant throughput while a pour runs
+export const CURE_DAYS = 14;            // paste cure clock (compressed from 28)
+export const HORIZON_DAY = 60;          // campaign horizon
+export const LATE_COST_PER_DAY = 120_000; // per overdue, unfilled available stope
+export const BASE_OPEX_PER_DAY = 40_000;  // fixed site running cost
+
 /** Compact money format: $1.8m / $850k / $420. */
 export function fmtMoney(n: number): string {
   const s = n < 0 ? "-" : "";
