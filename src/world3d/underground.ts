@@ -48,6 +48,7 @@ export interface StopeUG {
   isPrimary: boolean;
   levelIdx: number;
   fillType: string;
+  barricadeRisk?: boolean;
 }
 
 const UNIT_M = 7.5;

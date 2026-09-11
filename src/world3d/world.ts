@@ -294,6 +294,10 @@ export class World {
         this.underground.completePour(s, this.day);
         this.cash += fillRevenue(s.volumeM3);
         this.hud.setStatus(`${s.id} ${fill.label} complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);
+        if (s.barricadeRisk && Math.abs(Math.sin(s.depthM * 12.9 + s.volumeM3)) > 0.5) {
+          this.safetyIncidents++; this.cash -= 900_000;
+          this.hud.setStatus(`⚠ ${s.id} barricade seepage on fill — spill contained, but geotech was right (−${fmtMoney(900_000)}).`);
+        }
       }
     }
 
@@ -323,7 +327,11 @@ export class World {
 
   private maybeFireEvent() {
     if (this.activeEvent) return;
-    if (this.day >= 12 && !this.firedEvents.has("binder-delay")) this.fireEvent(this.evBinderDelay());
+    const pouring = this.underground.stopes.find((s) => s.status === "pouring");
+    const avail = this.underground.stopes.find((s) => s.status === "available");
+    if (this.day >= 20 && pouring && !this.firedEvents.has("seismic")) this.fireEvent(this.evSeismic(pouring));
+    else if (this.day >= 16 && avail && !this.firedEvents.has("geotech")) this.fireEvent(this.evGeotech(avail));
+    else if (this.day >= 12 && !this.firedEvents.has("binder-delay")) this.fireEvent(this.evBinderDelay());
     else if (this.day >= 24 && !this.firedEvents.has("mill-trip")) this.fireEvent(this.evMillTrip());
   }
   private fireEvent(ev: GameEvent) {
@@ -343,6 +351,28 @@ export class World {
         { label: `Truck top-up (+${BINDER_TOPUP_TONNES} t, ${fmtMoney(BINDER_TOPUP_COST)})`, detail: "Short lead, premium price — keeps pours running.", apply: (w) => { w.cash -= BINDER_TOPUP_COST; w.binderTonnes = Math.min(BINDER_SILO_CAP, w.binderTonnes + BINDER_TOPUP_TONNES); } },
         { label: "Accept reduced rail for 8 days", detail: "Delivery cut to 30% — stretch the silo, watch the level.", apply: (w) => { w.tempDeliveryMult = 0.3; w.tempDeliveryUntil = w.day + 8; } },
         { label: "Pause pours 3 days", detail: "Wait for rail — the schedule slips.", apply: (w) => { w.day += 3; } },
+      ],
+    };
+  }
+  private evSeismic(s: StopeUG): GameEvent {
+    return {
+      id: "seismic", title: "Seismic event during pour",
+      body: `A production blast on the level above has shaken the fresh fill mid-pour on ${s.id}. Pressure is spiking on the line — a soft, steady pour survives a pulse; a stiff, over-pressured line does not.`,
+      options: [
+        { label: "Ease flow and ride it out", detail: "Reduce flow, let the pulse pass — a little plug drift.", apply: () => { s.flowFactor = Math.max(0.4, s.flowFactor * 0.6); s.plugDrift = Math.min(1, s.plugDrift + 0.15); } },
+        { label: "Emergency flush the line", detail: "Clear the line now — safe, costs a bit of paste.", apply: (w) => { s.plugDrift = 0; w.cash -= 120_000; } },
+        { label: "Stand down the pour", detail: "Stop safely — cold joint, re-pour the placed volume.", apply: (w) => { w.underground.burst(s); w.hud.setStatus(`${s.id} stood down through the seismic event — re-pour needed.`); } },
+      ],
+    };
+  }
+  private evGeotech(s: StopeUG): GameEvent {
+    return {
+      id: "geotech", title: `Geotech flag on ${s.id}`,
+      body: `Ground control has flagged the barricade footing on ${s.id}. They want it reinforced before you pour fresh fill against it — ignore the geotech at your peril, a barricade breach is a runaway.`,
+      options: [
+        { label: "Reinforce the barricade (+$600k, +1 day)", detail: "Do it right — removes the failure risk.", apply: (w) => { w.cash -= 600_000; w.day += 1; s.barricadeRisk = false; } },
+        { label: "Proceed as designed", detail: "Save time and money — accept the risk of a breach.", apply: () => { s.barricadeRisk = true; } },
+        { label: "Delay this stope 2 days", detail: "Wait for a fuller assessment.", apply: (w) => { w.day += 2; } },
       ],
     };
   }
