@@ -22,7 +22,7 @@ import { ghostify } from "./buildings.js";
 import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
 import { TruckFleet } from "./trucks.js";
-import { Underground, type StopeUG } from "./underground.js";
+import { Underground, type StopeUG, FILL_TYPES } from "./underground.js";
 import { PlantInterior } from "./plantInterior.js";
 import {
   DEFAULT_RECIPE, type Recipe, frictionScale, ucs28Kpa, recipeCostPerM3,
@@ -261,38 +261,39 @@ export class World {
 
     // timed pours: pressure builds with flow + plug drift; burst if it tops rating
     for (const s of this.underground.stopes) {
-      if (s.status !== "pouring" || !s.cls) continue;
+      if (s.status !== "pouring") continue;
+      const fill = FILL_TYPES[s.fillType];
       const f = s.flowFactor;
-      // plug drift: too slow settles (laminar), too fast over-pushes; the sweet band decays it
-      if (f < 0.8) s.plugDrift += (0.8 - f) * 0.6 * dd;
-      else if (f > 1.15) s.plugDrift += (f - 1.15) * 0.5 * dd;
-      else s.plugDrift = Math.max(0, s.plugDrift - 0.22 * dd);
-      s.plugDrift = Math.min(1, s.plugDrift);
-
-      const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
-      s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipe.solids));
-
-      if (s.pressureMpa > s.cls.ratingMpa) {
-        this.underground.burst(s);
-        this.safetyIncidents++;
-        this.cash -= BURST_PENALTY;
-        this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
-        continue;
+      if (fill.reticulated) {
+        if (!s.cls) continue;
+        // plug drift: too slow settles (laminar), too fast over-pushes; the sweet band decays it
+        if (f < 0.8) s.plugDrift += (0.8 - f) * 0.6 * dd;
+        else if (f > 1.15) s.plugDrift += (f - 1.15) * 0.5 * dd;
+        else s.plugDrift = Math.max(0, s.plugDrift - 0.22 * dd);
+        s.plugDrift = Math.min(1, s.plugDrift);
+        const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
+        s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipe.solids));
+        if (s.pressureMpa > s.cls.ratingMpa) {
+          this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY;
+          this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
+          continue;
+        }
+      } else {
+        s.pressureMpa = 0; s.plugDrift = 0; // trucked (CAF) — no pipeline pressure
       }
 
-      let delta = Math.min(this.pourRatePerDay() * f * dd, s.volumeM3 - s.placedM3);
-      // binder draw from the silo — a dry silo stalls the pour
-      const need = (delta * this.recipe.binderKgPerM3) / 1000; // tonnes
+      let delta = Math.min(this.pourRatePerDay() * f * fill.rateMult * dd, s.volumeM3 - s.placedM3);
+      const need = (delta * this.recipe.binderKgPerM3 * fill.binderMult) / 1000; // tonnes
       if (need > 0 && this.binderTonnes < need) {
         delta *= this.binderTonnes / need; this.binderTonnes = 0;
         if (Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(`⚠ Binder silo dry — ${s.id} pour stalled. Order a truck top-up or wait for rail.`);
       } else this.binderTonnes -= need;
       s.placedM3 += delta;
-      this.cash -= recipeCostPerM3(this.recipe) * delta;
+      this.cash -= recipeCostPerM3(this.recipe) * fill.costMult * delta;
       if (s.placedM3 >= s.volumeM3) {
         this.underground.completePour(s, this.day);
         this.cash += fillRevenue(s.volumeM3);
-        this.hud.setStatus(`${s.id} pour complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);
+        this.hud.setStatus(`${s.id} ${fill.label} complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);
       }
     }
 
@@ -303,7 +304,7 @@ export class World {
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
     for (const s of ev.newlyCured) {
-      const achieved = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay);
+      const achieved = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
       s.ucsAchievedKpa = Math.round(achieved);
       s.ucsPass = achieved >= s.targetUcsKpa;
       this.hud.setStatus(`${s.id} 28-day cylinder ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa — ${s.ucsPass ? "PASS ✓" : "FAIL ✗ (geotech won't sign the hand-back)"}.`);
@@ -544,10 +545,17 @@ export class World {
     const head = staticHeadMpa(st.depthM);
     const dueLate = this.day > st.dueDay && (st.status === "available" || st.status === "piped");
     const due = `<span class="${dueLate ? "pLate" : ""}">${dueLate ? "OVERDUE" : "due day " + st.dueDay}</span>`;
-    const meta = `<div class="pMeta">−${st.depthM} m · ${st.volumeM3.toLocaleString()} m³ · run ${Math.round(st.lengthM)} m · ${due}<br>Static head ρgh: <b>${head.toFixed(1)} MPa</b> · target UCS <b>${st.targetUcsKpa} kPa</b></div>`;
+    const ft = FILL_TYPES[st.fillType];
+    const badge = st.isPrimary ? `<span class="badgePri">PRIMARY</span>` : `<span class="badgeSec">secondary</span>`;
+    const meta = `<div class="pMeta">${badge} · ${ft.short} · −${st.depthM} m · ${st.volumeM3.toLocaleString()} m³<br>Static head ρgh: <b>${head.toFixed(1)} MPa</b> · target UCS <b>${st.targetUcsKpa} kPa</b> · ${due}</div>`;
+    const fillPick = `<div class="fillPick">${Object.values(FILL_TYPES).map((f) => `<button class="fillBtn ${st.fillType === f.key ? "on" : ""}" data-act="fill:${f.key}">${f.short}</button>`).join("")}</div><div class="pNote">${ft.note}</div>`;
     let body = "";
     if (st.status === "locked") {
-      body = `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
+      body = !st.isPrimary && !this.underground.primaryCured(st.levelIdx)
+        ? `<div class="pRow muted">Secondary stope — mining waits until the level's <b>primary</b> is filled and cured.</div>`
+        : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
+    } else if (st.status === "available" && !ft.reticulated) {
+      body = `${fillPick}<button class="pBtn primary" data-act="truck"><b>Truck-fill (CAF)</b><span>no reticulation — hauled and placed</span></button>`;
     } else if (st.status === "available") {
       const net = this.underground.net;
       const idx = this.underground.stopes.indexOf(st);
@@ -566,7 +574,7 @@ export class World {
       }).join("");
       const canBuild = net.pathCanBuild(idx);
       const planned = net.pathPlannedCost(idx);
-      body = `
+      body = `${fillPick}
         <div class="pNote">Design each leg: pick a class that out-rates its pressure. Deeper legs carry more head — a borehole ⌇ choke relieves everything below it. Legs are shared between stopes.</div>
         <div class="segList">${rows}</div>
         <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : "set a valid class on every leg"}</span></button>`;
@@ -615,6 +623,8 @@ export class World {
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;
+    if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
+    if (act === "truck") { if (this.underground.readyTrucked(st)) { this.hud.setStatus(`${st.id} set for CAF — trucked, ready to place.`); this.renderStopePanel(); } return; }
     if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
     if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
     if (act === "build") {

@@ -15,6 +15,13 @@ import { Reticulation } from "./reticulation.js";
 
 export type StopeStatus = "locked" | "available" | "piped" | "pouring" | "curing" | "cured";
 
+export interface FillType { key: string; label: string; short: string; costMult: number; ucsMult: number; rateMult: number; cureMult: number; binderMult: number; reticulated: boolean; note: string; }
+export const FILL_TYPES: Record<string, FillType> = {
+  paste: { key: "paste", label: "Paste fill", short: "Paste", costMult: 1.0, ucsMult: 1.0, rateMult: 1.0, cureMult: 1.0, binderMult: 1.0, reticulated: true, note: "Piped paste. Balanced — needs a full reticulation to the stope." },
+  hydraulic: { key: "hydraulic", label: "Hydraulic fill", short: "HF", costMult: 0.7, ucsMult: 0.78, rateMult: 1.15, cureMult: 1.35, binderMult: 0.8, reticulated: true, note: "Cheap, drains slowly (longer cure), lower strength. Good for low-target secondaries." },
+  caf: { key: "caf", label: "Cemented aggregate", short: "CAF", costMult: 0.9, ucsMult: 1.3, rateMult: 0.5, cureMult: 0.9, binderMult: 0.4, reticulated: false, note: "Trucked — no reticulation. Very strong at low binder but slow to place. Good for primaries." },
+};
+
 export interface StopeUG {
   id: string;
   mesh: Mesh;
@@ -37,6 +44,10 @@ export interface StopeUG {
   targetUcsKpa: number;
   ucsAchievedKpa: number;
   ucsPass: boolean | null;
+  // design
+  isPrimary: boolean;
+  levelIdx: number;
+  fillType: string;
 }
 
 const UNIT_M = 7.5;
@@ -109,13 +120,15 @@ export class Underground {
         chamber.outlineColor = Color3.FromHexString("#39d98a");
         chamber.outlineWidth = 0.35;
         this.shadow.addShadowCaster(chamber);
+        const isPrimary = sx === 32; const levelIdx = LEVELS.indexOf(lv);
         this.stopes.push({
           id: "", mesh: chamber, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
           volumeM3: 9000 + sx * 90 + lv.depthM * 6, placedM3: 0,
           availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
-          targetUcsKpa: 500 + LEVELS.indexOf(lv) * 150 + (sx === 56 ? 100 : 0), // deeper/further = higher target
+          targetUcsKpa: 500 + levelIdx * 120 + (isPrimary ? 180 : 0), // primaries carry higher strength targets
           ucsAchievedKpa: 0, ucsPass: null,
+          isPrimary, levelIdx, fillType: "paste",
         });
       }
     }
@@ -136,10 +149,23 @@ export class Underground {
     if (stope) stope.mesh.renderOutline = true;
   }
 
+  cureDaysFor(s: StopeUG) { return CURE_DAYS * FILL_TYPES[s.fillType].cureMult; }
+  primaryCured(levelIdx: number) { return this.stopes.some((x) => x.levelIdx === levelIdx && x.isPrimary && x.status === "cured"); }
+
   cureProgress(stope: StopeUG, day: number): number {
     if (stope.status === "cured") return 1;
     if (stope.status !== "curing") return 0;
-    return Math.min(1, (day - stope.cureStartDay) / CURE_DAYS);
+    return Math.min(1, (day - stope.cureStartDay) / this.cureDaysFor(stope));
+  }
+
+  setFillType(stope: StopeUG, key: string) { if (stope.status === "available" && FILL_TYPES[key]) stope.fillType = key; }
+
+  /** CAF is trucked — no reticulation. Marks the stope pourable directly. */
+  readyTrucked(stope: StopeUG): boolean {
+    if (stope.status !== "available" || FILL_TYPES[stope.fillType].reticulated) return false;
+    stope.status = "piped"; stope.cls = null; stope.choke = false;
+    (stope.mesh.material as StandardMaterial).diffuseColor = Color3.FromHexString(STATUS_COLOR.piped);
+    return true;
   }
 
   counts() {
@@ -153,8 +179,8 @@ export class Underground {
   updateSchedule(day: number): { newlyAvailable: StopeUG[]; newlyCured: StopeUG[]; overdue: StopeUG[] } {
     const newlyAvailable: StopeUG[] = [], newlyCured: StopeUG[] = [], overdue: StopeUG[] = [];
     for (const s of this.stopes) {
-      if (s.status === "locked" && day >= s.availableDay) { s.status = "available"; newlyAvailable.push(s); }
-      if (s.status === "curing" && day - s.cureStartDay >= CURE_DAYS) { s.status = "cured"; newlyCured.push(s); }
+      if (s.status === "locked" && day >= s.availableDay && (s.isPrimary || this.primaryCured(s.levelIdx))) { s.status = "available"; newlyAvailable.push(s); }
+      if (s.status === "curing" && day - s.cureStartDay >= this.cureDaysFor(s)) { s.status = "cured"; newlyCured.push(s); }
       if ((s.status === "available" || s.status === "piped") && day > s.dueDay) overdue.push(s);
       this.paint(s, day);
     }
