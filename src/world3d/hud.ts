@@ -43,7 +43,7 @@ export class Hud {
     root.className = "worldHud";
     this.rootEl = root;
     root.innerHTML = `
-      <div class="whBrand">VOID<span>WORKS</span> <em>· Wheal Verity</em></div>
+      <div class="whBrand">BACKFILL <span>TYCOON</span> <em>· Wheal Verity</em></div>
       <div class="whClock">
         <div class="whDay" id="whDay">Day 1</div>
         <button class="whSpd" id="whPause">⏸</button>

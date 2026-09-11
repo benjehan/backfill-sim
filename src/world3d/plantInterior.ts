@@ -18,7 +18,7 @@ const T3 = 3;                       // world units per plant tile
 const OX = -(COLS * T3) / 2;
 const OZ = -(ROWS * T3) / 2;
 const EQUIP_COST_MULT = 100;        // scale the model's costs to mining capital
-const BUILDABLE = ["thickener", "filter", "mixer", "pump"];
+const BUILDABLE = ["thickener", "cyclone", "filter", "mixer", "pump"];
 const STATE_EMIT: Record<string, string> = { running: "#194b32", throttled: "#4a3a10", starved: "#4a1414", idle: "#101418", off: "#101418" };
 
 function mat(scene: Scene, hex: string) { const m = new StandardMaterial("pm", scene); m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black(); return m; }
@@ -215,10 +215,11 @@ export class PlantInterior {
 
   /** Debug/testing: place and wire a full working line. */
   debugBuildLine() {
-    this.plant.place("thickener", 3, 1); this.plant.place("filter", 7, 1); this.plant.place("mixer", 11, 4); this.plant.place("pump", 15, 4);
+    this.plant.place("thickener", 3, 1); this.plant.place("cyclone", 6, 1); this.plant.place("filter", 9, 1); this.plant.place("mixer", 12, 4); this.plant.place("pump", 15, 4);
     const id = (t: string) => this.plant.machines.find((m) => m.type === t)!.id;
     this.plant.connect(id("src_tailings"), 0, id("thickener"), 0);
-    this.plant.connect(id("thickener"), 0, id("filter"), 0);
+    this.plant.connect(id("thickener"), 0, id("cyclone"), 0);
+    this.plant.connect(id("cyclone"), 0, id("filter"), 0);
     this.plant.connect(id("filter"), 0, id("mixer"), 0);
     this.plant.connect(id("src_binder"), 0, id("mixer"), 1);
     this.plant.connect(id("src_water"), 0, id("mixer"), 2);
