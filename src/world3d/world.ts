@@ -686,10 +686,19 @@ export class World {
         <div class="pBar"><div class="pBarFill cure" style="width:${pct}%"></div></div>
         <div class="pRow muted">${pct}% cured · ${daysLeft} d to strength</div>
         ${ucs7}`;
-    } else { // cured
-      body = st.ucsPass === false
-        ? `<div class="pRow"><span class="pLate">✗ 28-day UCS ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa — FAILED. Geotech won't sign the hand-back.</span></div>`
-        : `<div class="pRow good">✓ Cured · UCS ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa — strength reached, ore access unlocked.</div>`;
+    } else { // cured — reconciliation / stope de-brief
+      const onTime = st.cureStartDay <= st.dueDay;
+      const binderT = Math.round((st.placedM3 * this.recipe.binderKgPerM3 * ft.binderMult) / 1000);
+      const verdict = st.ucsPass === false
+        ? `<span class="pLate">✗ ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa FAIL</span>`
+        : `<span class="good">✓ ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa</span>`;
+      body = `
+        <div class="pNote">Reconciliation — stope de-brief:</div>
+        <div class="pSplit"><span>Placed</span><b>${Math.round(st.placedM3).toLocaleString()} m³</b></div>
+        <div class="pSplit"><span>Fill</span><b>${ft.label}</b></div>
+        <div class="pSplit"><span>Binder used</span><b>~${binderT.toLocaleString()} t</b></div>
+        <div class="pSplit"><span>28-day UCS</span><b>${verdict}</b></div>
+        <div class="pSplit"><span>Hand-back</span><b>${onTime ? "on time" : "late"}</b></div>`;
     }
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
   }
