@@ -29,6 +29,7 @@ export class Hud {
   private pauseBtn: HTMLButtonElement;
   private speedBtns: HTMLButtonElement[] = [];
   private result: HTMLElement;
+  private event!: HTMLElement;
   private rootEl: HTMLElement;
   private labPanel!: HTMLElement;
   private labReadoutEl!: HTMLElement;
@@ -69,6 +70,7 @@ export class Hud {
       <div class="whPalette" id="whPalette"></div>
       <div class="whPanel hidden" id="whPanel"></div>
       <div class="whResult hidden" id="whResult"></div>
+      <div class="whResult hidden" id="whEvent"></div>
       <div class="whHint">Drag to orbit · scroll to zoom · right-drag to pan</div>`;
     parent.appendChild(root);
     this.statusEl = root.querySelector("#whStatus")!;
@@ -105,7 +107,8 @@ export class Hud {
       const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
       if (el) cb.onPanelAction(el.dataset.act!);
     });
-    delegate(this.panel); delegate(this.result);
+    this.event = root.querySelector("#whEvent")!;
+    delegate(this.panel); delegate(this.result); delegate(this.event);
 
     for (const s of CATALOG) {
       const b = document.createElement("button");
@@ -158,6 +161,8 @@ export class Hud {
   }
 
   showResult(html: string) { this.result.innerHTML = html; this.result.classList.remove("hidden"); }
+  showEvent(html: string) { this.event.innerHTML = html; this.event.classList.remove("hidden"); }
+  hideEvent() { this.event.classList.add("hidden"); }
   setBinder(tonnes: number, cap: number) {
     this.binderV.textContent = `${Math.round(tonnes)} t`;
     const f = Math.max(0, Math.min(100, (tonnes / cap) * 100));

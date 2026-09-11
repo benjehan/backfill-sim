@@ -41,6 +41,8 @@ const START_CASH = 150_000_000;
 const SPEEDS = [1, 2, 4, 8];
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; }
+interface EventOption { label: string; detail: string; apply: (w: World) => void; }
+interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
 
 export class World {
   private engine!: Engine;
@@ -74,6 +76,11 @@ export class World {
   private safetyIncidents = 0;
   private binderTonnes = BINDER_SILO_CAP;
   private lastDayShown = 0;
+  private roadMeshes: Mesh[] = [];
+  private activeEvent: GameEvent | null = null;
+  private firedEvents = new Set<string>();
+  private tempDeliveryMult = 1; private tempDeliveryUntil = 0;
+  private tempPourMult = 1; private tempPourUntil = 0;
   private get speed() { return SPEEDS[this.speedIdx]; }
 
   private armed: BuildingSpec | null = null;
@@ -240,14 +247,14 @@ export class World {
 
   /** Pour throughput is set by the plant you build inside: no line = slow contract plant. */
   private pourRatePerDay(): number {
-    if (this.plantThroughput <= 0) return POUR_RATE_M3_PER_DAY * 0.4;
-    return POUR_RATE_M3_PER_DAY * Math.max(0.4, Math.min(1.2, this.plantThroughput / 55));
+    const base = this.plantThroughput <= 0 ? POUR_RATE_M3_PER_DAY * 0.4 : POUR_RATE_M3_PER_DAY * Math.max(0.4, Math.min(1.2, this.plantThroughput / 55));
+    return base * this.pourMult();
   }
 
   // ---- live clock -----------------------------------------------------------
 
   private advanceTime(dt: number) {
-    if (this.paused || this.ended) return;
+    if (this.paused || this.ended || this.activeEvent) return;
     const prev = this.day;
     this.day += (dt / SECONDS_PER_DAY) * this.speed;
     const dd = this.day - prev;
@@ -289,7 +296,8 @@ export class World {
       }
     }
 
-    this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_DELIVERY_PER_DAY * dd); // rail delivery
+    const deliveryMult = this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1;
+    this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_DELIVERY_PER_DAY * deliveryMult * dd); // rail delivery
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
@@ -306,7 +314,47 @@ export class World {
     if (Math.floor(this.day) !== this.lastDayShown) { this.lastDayShown = Math.floor(this.day); this.refreshClock(); this.refreshSchedule(); if (this.mode === "underground") this.renderStopePanel(); }
     else if (this.mode === "underground" && this.selectedStope?.status === "pouring") this.renderStopePanel();
 
+    this.maybeFireEvent();
     if (this.day >= HORIZON_DAY || this.underground.counts().cured === this.underground.stopes.length) this.endCampaign();
+  }
+
+  private pourMult() { return this.day < this.tempPourUntil ? this.tempPourMult : 1; }
+
+  private maybeFireEvent() {
+    if (this.activeEvent) return;
+    if (this.day >= 12 && !this.firedEvents.has("binder-delay")) this.fireEvent(this.evBinderDelay());
+    else if (this.day >= 24 && !this.firedEvents.has("mill-trip")) this.fireEvent(this.evMillTrip());
+  }
+  private fireEvent(ev: GameEvent) {
+    this.activeEvent = ev; this.firedEvents.add(ev.id); this.paused = true; this.refreshClock();
+    this.hud.showEvent(`<div class="rsHead">⚠ ${ev.title}</div><p class="evBody">${ev.body}</p><div class="evOpts">${ev.options.map((o, i) => `<button class="optBtn" data-act="ev:${i}"><b>${o.label}</b><span>${o.detail}</span></button>`).join("")}</div>`);
+  }
+  private resolveEvent(i: number) {
+    const ev = this.activeEvent; if (!ev) return;
+    ev.options[i].apply(this);
+    this.activeEvent = null; this.paused = false; this.hud.hideEvent(); this.updateEconomy(); this.refreshClock();
+  }
+  private evBinderDelay(): GameEvent {
+    return {
+      id: "binder-delay", title: "Binder rail shipment delayed",
+      body: "The rail cement shipment is held up — the silo will run down. Binder is ~70% of your cost, and every pour needs it. Silo capacity vs delivery lead time is the eternal squeeze.",
+      options: [
+        { label: `Truck top-up (+${BINDER_TOPUP_TONNES} t, ${fmtMoney(BINDER_TOPUP_COST)})`, detail: "Short lead, premium price — keeps pours running.", apply: (w) => { w.cash -= BINDER_TOPUP_COST; w.binderTonnes = Math.min(BINDER_SILO_CAP, w.binderTonnes + BINDER_TOPUP_TONNES); } },
+        { label: "Accept reduced rail for 8 days", detail: "Delivery cut to 30% — stretch the silo, watch the level.", apply: (w) => { w.tempDeliveryMult = 0.3; w.tempDeliveryUntil = w.day + 8; } },
+        { label: "Pause pours 3 days", detail: "Wait for rail — the schedule slips.", apply: (w) => { w.day += 3; } },
+      ],
+    };
+  }
+  private evMillTrip(): GameEvent {
+    return {
+      id: "mill-trip", title: "Mill trip — tailings feed cut",
+      body: "The mill has tripped. Tailings feed to the plant is throttled — surge capacity is your buffer against the mill's bad days.",
+      options: [
+        { label: "Run at reduced flow (5 days)", detail: "Pours proceed but pour rate halved.", apply: (w) => { w.tempPourMult = 0.5; w.tempPourUntil = w.day + 5; } },
+        { label: "Draw down tailings buffer (+$300k)", detail: "Buy stored tailings — keep full rate.", apply: (w) => { w.cash -= 300_000; } },
+        { label: "Hold pours 2 days", detail: "Wait for the mill restart.", apply: (w) => { w.day += 2; } },
+      ],
+    };
   }
 
   private labReadout(): string {
@@ -435,9 +483,27 @@ export class World {
     this.buildings.push({ spec, root, pos: at, marker: null });
     if (spec.spawnsWorkers) this.crew.add(spec.spawnsWorkers);
     if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
+    this.drawRoads();
     this.recomputePower();
     this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
+  }
+
+  /** Haul roads from every building to the mine portal, so the site reads as connected. */
+  private drawRoads() {
+    this.roadMeshes.forEach((m) => m.dispose()); this.roadMeshes = [];
+    const roadMat = new StandardMaterial("roadMat", this.scene);
+    roadMat.diffuseColor = Color3.FromHexString("#4a4640"); roadMat.specularColor = Color3.Black();
+    for (const b of this.buildings) {
+      const dx = this.portal.x - b.pos.x, dz = this.portal.z - b.pos.z;
+      const len = Math.hypot(dx, dz); if (len < 1) continue;
+      const road = MeshBuilder.CreateBox("road", { width: 4, height: 0.2, depth: len }, this.scene);
+      road.material = roadMat; road.parent = this.surfaceRoot;
+      road.position.set((b.pos.x + this.portal.x) / 2, heightAt((b.pos.x + this.portal.x) / 2, (b.pos.z + this.portal.z) / 2) + 0.15, (b.pos.z + this.portal.z) / 2);
+      road.rotation.y = Math.atan2(dx, dz);
+      road.isPickable = false;
+      this.roadMeshes.push(road);
+    }
   }
 
   private recomputePower() {
@@ -545,6 +611,7 @@ export class World {
 
   private onPanelAction(act: string) {
     if (act === "restart") { location.reload(); return; }
+    if (act.startsWith("ev:")) { this.resolveEvent(+act.slice(3)); return; }
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;
