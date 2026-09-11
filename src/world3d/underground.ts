@@ -44,6 +44,8 @@ export interface StopeUG {
   targetUcsKpa: number;
   ucsAchievedKpa: number;
   ucsPass: boolean | null;
+  ucs7Kpa?: number;
+  ucs7Reported?: boolean;
   // design
   isPrimary: boolean;
   levelIdx: number;

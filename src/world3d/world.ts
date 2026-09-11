@@ -307,6 +307,15 @@ export class World {
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
+    // 7-day early cylinder — the course's mid-cure warning that a recipe is short
+    for (const s of this.underground.stopes) {
+      if (s.status === "curing" && !s.ucs7Reported && this.day - s.cureStartDay >= this.underground.cureDaysFor(s) * 0.5) {
+        s.ucs7Reported = true;
+        const ucs7 = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult * 0.6;
+        s.ucs7Kpa = Math.round(ucs7);
+        this.hud.setStatus(`${s.id} 7-day cylinder ${s.ucs7Kpa} kPa — ${ucs7 >= s.targetUcsKpa * 0.6 ? "on track" : "LOW, 28-day may fail"}.`);
+      }
+    }
     for (const s of ev.newlyCured) {
       const achieved = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
       s.ucsAchievedKpa = Math.round(achieved);
@@ -642,11 +651,15 @@ export class World {
         <div class="pNote">Run too slow and the paste settles into a plug (pressure climbs); push too hard and friction spikes. Keep it in the band, flush a forming plug, or burst the line.</div>`;
     } else if (st.status === "curing") {
       const pct = Math.round(this.underground.cureProgress(st, this.day) * 100);
-      const daysLeft = Math.max(0, CURE_DAYS - (this.day - st.cureStartDay)).toFixed(1);
+      const daysLeft = Math.max(0, this.underground.cureDaysFor(st) - (this.day - st.cureStartDay)).toFixed(1);
+      const ucs7 = st.ucs7Reported
+        ? `<div class="pRow ${(st.ucs7Kpa ?? 0) >= st.targetUcsKpa * 0.6 ? "good" : ""}"><span class="${(st.ucs7Kpa ?? 0) >= st.targetUcsKpa * 0.6 ? "" : "pLate"}">7-day cylinder: ${st.ucs7Kpa} kPa ${(st.ucs7Kpa ?? 0) >= st.targetUcsKpa * 0.6 ? "(on track)" : "(LOW — may fail 28d)"}</span></div>`
+        : `<div class="pRow muted">7-day cylinder pending…</div>`;
       body = `
-        <div class="pRow">Curing · <b>${st.cls?.name}</b></div>
+        <div class="pRow">Curing · <b>${ft.short}</b></div>
         <div class="pBar"><div class="pBarFill cure" style="width:${pct}%"></div></div>
-        <div class="pRow muted">${pct}% cured · ${daysLeft} d to strength</div>`;
+        <div class="pRow muted">${pct}% cured · ${daysLeft} d to strength</div>
+        ${ucs7}`;
     } else { // cured
       body = st.ucsPass === false
         ? `<div class="pRow"><span class="pLate">✗ 28-day UCS ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa — FAILED. Geotech won't sign the hand-back.</span></div>`
