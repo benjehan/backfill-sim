@@ -49,6 +49,10 @@ export interface StopeUG {
   levelIdx: number;
   fillType: string;
   barricadeRisk?: boolean;
+  // pre-pour sign-off
+  signBarricade?: boolean;
+  signPourNote?: boolean;
+  signLowStart?: boolean;
 }
 
 const UNIT_M = 7.5;

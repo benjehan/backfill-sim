@@ -610,9 +610,17 @@ export class World {
         <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : "set a valid class on every leg"}</span></button>`;
     } else if (st.status === "piped") {
       const cost = fillCost(st.volumeM3), rev = fillRevenue(st.volumeM3);
+      const chk = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="sign:${key}">${on ? "☑" : "☐"} ${label}</button>`;
+      const ready = st.signBarricade && st.signPourNote;
       body = `
-        <div class="pRow">Reticulated · <b>${st.cls?.name}</b>${st.choke ? " + choke" : ""}</div>
-        <button class="pBtn primary" data-act="pour"><b>Start pour</b><span>${Math.round(st.volumeM3 / POUR_RATE_M3_PER_DAY * 10) / 10} d · paste ${fmtMoney(cost)} → ${fmtMoney(rev)} ore access</span></button>`;
+        <div class="pRow">${ft.reticulated ? "Reticulated · <b>" + (st.cls?.name ?? "") + "</b>" + (st.choke ? " + choke" : "") : "Trucked (CAF) · ready to place"}</div>
+        <div class="pNote">Pre-pour sign-off — skip an item and it bites later:</div>
+        <div class="chkList">
+          ${chk("Barricade", !!st.signBarricade, "Barricade built &amp; signed off")}
+          ${chk("PourNote", !!st.signPourNote, "Pour note issued &amp; approved")}
+          ${chk("LowStart", !!st.signLowStart, "Low-solids line start")}
+        </div>
+        <button class="pBtn primary" data-act="pour" ${ready ? "" : "disabled"}><b>Begin pour</b><span>${ready ? `paste ${fmtMoney(cost)} → ${fmtMoney(rev)} ore access` : "sign the barricade & pour note first"}</span></button>`;
     } else if (st.status === "pouring") {
       const pct = Math.round((st.placedM3 / st.volumeM3) * 100);
       const rating = st.cls?.ratingMpa ?? 1;
@@ -655,6 +663,13 @@ export class World {
     if (!st) return;
     if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
     if (act === "truck") { if (this.underground.readyTrucked(st)) { this.hud.setStatus(`${st.id} set for CAF — trucked, ready to place.`); this.renderStopePanel(); } return; }
+    if (act.startsWith("sign:")) {
+      const k = act.slice(5);
+      if (k === "Barricade") st.signBarricade = !st.signBarricade;
+      else if (k === "PourNote") st.signPourNote = !st.signPourNote;
+      else if (k === "LowStart") st.signLowStart = !st.signLowStart;
+      this.renderStopePanel(); return;
+    }
     if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
     if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
     if (act === "build") {
@@ -668,9 +683,11 @@ export class World {
       this.cash -= res.cost; this.updateEconomy(); this.renderStopePanel();
       this.hud.setStatus(`${st.id} reticulation built — weakest leg ${res.cls.name}${res.choke ? " (choked)" : ""}, ${fmtMoney(res.cost)}.`);
     } else if (act === "pour") {
+      if (st.status === "piped" && (!st.signBarricade || !st.signPourNote)) { this.hud.setStatus("Sign the barricade and issue the pour note before pouring."); return; }
       if (!this.underground.startPour(st)) return;
+      if (!st.signLowStart) st.plugDrift = 0.25; // skipped the low-solids start — a plug head-start
       this.renderStopePanel();
-      this.hud.setStatus(`${st.id} pour started — watch the pressure, keep the flow in the band.`);
+      this.hud.setStatus(`${st.id} pour started${st.signLowStart ? "" : " without a low-solids start — mind the plug"}. Keep the flow in the band.`);
     } else if (act === "flow-up") {
       if (st.status === "pouring") { st.flowFactor = Math.min(1.6, st.flowFactor + 0.15); this.renderStopePanel(); }
     } else if (act === "flow-down") {
