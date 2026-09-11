@@ -101,6 +101,19 @@ export const createWorkshop: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
+// ---- crusher plant (aggregate line for CAF) --------------------------------
+export const createCrusher: Build = (scene, onMesh) =>
+  rootOf(scene, "crusher", () => {
+    const parts: Mesh[] = [];
+    const pad = box(scene, "cpad", 16, 1, 12, "#6f7378"); pad.position.y = 0.5; parts.push(pad);
+    const hopper = MeshBuilder.CreateCylinder("chop", { diameterTop: 6, diameterBottom: 2, height: 6, tessellation: 6 }, scene);
+    hopper.material = mat(scene, "#7a5a3a"); hopper.position.set(-4, 4, 0); parts.push(hopper);
+    const jaw = box(scene, "cjaw", 6, 6, 6, "#4c5a66"); jaw.position.set(2, 4, 0); parts.push(jaw);
+    const belt = box(scene, "cbelt", 11, 0.6, 2.2, "#2c3138"); belt.position.set(6, 3.2, 4); belt.rotation.y = 0.5; parts.push(belt);
+    const pile = cyl(scene, "cpile", 7, 3.4, "#9a8763", 8); pile.position.set(10.5, 1.7, 5.5); parts.push(pile);
+    return parts;
+  }, onMesh);
+
 // ---- miners' dry (people building) -----------------------------------------
 export const createDry: Build = (scene, onMesh) =>
   rootOf(scene, "dry", () => {

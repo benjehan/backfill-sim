@@ -582,6 +582,7 @@ export class World {
   }
 
   private updateEconomy() { this.hud.setEconomy(this.cash, this.powered, this.total); this.hud.setBinder(this.binderTonnes, BINDER_SILO_CAP); }
+  private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher"); }
 
   private updateMarker(b: Placed, showRed: boolean) {
     if (showRed && !b.marker) {
@@ -617,7 +618,8 @@ export class World {
         ? `<div class="pRow muted">Secondary stope — mining waits until the level's <b>primary</b> is filled and cured.</div>`
         : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
     } else if (st.status === "available" && !ft.reticulated) {
-      body = `${fillPick}<button class="pBtn primary" data-act="truck"><b>Truck-fill (CAF)</b><span>no reticulation — hauled and placed</span></button>`;
+      const canCaf = this.hasCrusher();
+      body = `${fillPick}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;
     } else if (st.status === "available") {
       const net = this.underground.net;
       const idx = this.underground.stopes.indexOf(st);
@@ -710,7 +712,10 @@ export class World {
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;
     if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
-    if (act === "truck") { if (this.underground.readyTrucked(st)) { this.hud.setStatus(`${st.id} set for CAF — trucked, ready to place.`); this.renderStopePanel(); } return; }
+    if (act === "truck") {
+      if (!this.hasCrusher()) { this.hud.setStatus("CAF needs crushed aggregate — build a Crusher plant on the surface first."); return; }
+      if (this.underground.readyTrucked(st)) { this.hud.setStatus(`${st.id} set for CAF — trucked, ready to place.`); this.renderStopePanel(); } return;
+    }
     if (act.startsWith("sign:")) {
       const k = act.slice(5);
       if (k === "Barricade") st.signBarricade = !st.signBarricade;

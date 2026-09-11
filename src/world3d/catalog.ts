@@ -4,7 +4,7 @@ import { Scene } from "@babylonjs/core/scene";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import {
-  createPlant, createPowerStation, createThickener, createSilos, createWorkshop, createDry,
+  createPlant, createPowerStation, createThickener, createSilos, createWorkshop, createDry, createCrusher,
 } from "./buildings.js";
 
 export interface BuildingSpec {
@@ -27,6 +27,7 @@ export interface BuildingSpec {
 export const CATALOG: BuildingSpec[] = [
   { type: "power", label: "Power station", icon: "⚡", cost: 8_000_000, fw: 18, fd: 13, markerY: 18, needsPower: false, powerRadius: 95, opexPerDay: 50_000, make: createPowerStation },
   { type: "plant", label: "Backfill plant", icon: "🏭", cost: 45_000_000, fw: 28, fd: 22, markerY: 21, needsPower: true, opexPerDay: 120_000, spawnsWorkers: 3, make: createPlant },
+  { type: "crusher", label: "Crusher plant", icon: "⚒", cost: 12_000_000, fw: 16, fd: 12, markerY: 9, needsPower: true, opexPerDay: 35_000, make: createCrusher },
   { type: "workshop", label: "Truck workshop", icon: "🚚", cost: 6_500_000, fw: 18, fd: 14, markerY: 10, needsPower: true, opexPerDay: 30_000, spawnsTrucks: 3, spawnsWorkers: 2, make: createWorkshop },
   { type: "dry", label: "Miners' dry", icon: "👷", cost: 3_000_000, fw: 14, fd: 10, markerY: 8, needsPower: true, opexPerDay: 20_000, spawnsWorkers: 4, make: createDry },
 ];
