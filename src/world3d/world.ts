@@ -77,6 +77,7 @@ export class World {
   private binderTonnes = BINDER_SILO_CAP;
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
+  private powerLineMeshes: Mesh[] = [];
   private activeEvent: GameEvent | null = null;
   private firedEvents = new Set<string>();
   private tempDeliveryMult = 1; private tempDeliveryUntil = 0;
@@ -578,7 +579,26 @@ export class World {
       if (ok) this.powered++;
     }
     this.total = this.buildings.length;
+    this.drawPowerLines(sources);
     this.updateEconomy();
+  }
+
+  /** Draw sagging cables from the nearest in-range power source to each powered building. */
+  private drawPowerLines(sources: Placed[]) {
+    this.powerLineMeshes.forEach((m) => m.dispose()); this.powerLineMeshes = [];
+    if (!sources.length) return;
+    for (const b of this.buildings) {
+      if (!b.spec.needsPower) continue;
+      let best: Placed | null = null, bd = Infinity;
+      for (const s of sources) { const d = Vector3.Distance(s.pos, b.pos); if (d <= (s.spec.powerRadius ?? 0) && d < bd) { bd = d; best = s; } }
+      if (!best) continue;
+      const a = new Vector3(best.pos.x, best.pos.y + best.spec.markerY, best.pos.z);
+      const c = new Vector3(b.pos.x, b.pos.y + b.spec.markerY, b.pos.z);
+      const mid = Vector3.Center(a, c); mid.y -= 2.5; // sag
+      const line = MeshBuilder.CreateLines("pline", { points: [a, mid, c] }, this.scene);
+      line.color = Color3.FromHexString("#12161c"); line.parent = this.surfaceRoot; line.isPickable = false;
+      this.powerLineMeshes.push(line);
+    }
   }
 
   private updateEconomy() { this.hud.setEconomy(this.cash, this.powered, this.total); this.hud.setBinder(this.binderTonnes, BINDER_SILO_CAP); }
