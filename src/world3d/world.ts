@@ -141,6 +141,7 @@ export class World {
     this.underground.updateSchedule(this.day);
     this.refreshClock();
     this.refreshSchedule();
+    this.maybeShowIntro();
 
     this.scene.onPointerObservable.add((pi) => this.onPointer(pi));
     this.engine.runRenderLoop(() => {
@@ -151,6 +152,25 @@ export class World {
     });
     window.addEventListener("resize", () => this.engine.resize());
     (window as any).__world = this;
+  }
+
+  private maybeShowIntro() {
+    try { if (localStorage.getItem("bt_intro") === "1") return; } catch { /* ignore */ }
+    const el = document.createElement("div");
+    el.className = "whResult";
+    el.innerHTML = `<div class="introCard">
+      <div class="rsHead">BACKFILL TYCOON — how it runs</div>
+      <ol class="introSteps">
+        <li>Build a <b>power station</b>, then the <b>backfill plant</b> on the pad.</li>
+        <li>Click the plant to step <b>inside</b> and wire the process line: thickener → cyclone → filter → mixer → pump.</li>
+        <li>Hit <b>⛏ Go underground</b>. Stopes mine out on a schedule — <b>primaries</b> before their secondaries.</li>
+        <li>Pick a <b>fill type</b>, <b>design the reticulation</b> leg-by-leg, and set the mix in the <b>🧪 Lab</b>.</li>
+        <li><b>Pour</b> — mind the pressure, flush plugs. Then cure, crush the cylinders, and answer to the board.</li>
+      </ol>
+      <button class="pBtn primary" id="introStart"><b>Start building ▶</b></button>
+    </div>`;
+    this.root.appendChild(el);
+    el.querySelector("#introStart")!.addEventListener("click", () => { el.remove(); try { localStorage.setItem("bt_intro", "1"); } catch { /* ignore */ } });
   }
 
   private setSky(underground: boolean) {

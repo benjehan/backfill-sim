@@ -417,6 +417,13 @@ select, input[type=number] {
 .chkBtn { text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; font-size: 12px; cursor: pointer; }
 .chkBtn:hover { border-color: var(--accent); }
 .chkBtn.on { border-color: var(--green); color: #a9e9c8; }
+/* intro / onboarding card */
+.introCard { width: 620px; max-width: 92vw; background: var(--panel2); border: 1px solid var(--accent); border-radius: 14px; padding: 26px; box-shadow: 0 24px 70px #000b; }
+.introCard .rsHead { color: var(--accent); margin-bottom: 14px; text-align: center; }
+.introSteps { margin: 0 0 18px; padding-left: 22px; line-height: 1.7; color: var(--text); }
+.introSteps li { margin: 6px 0; }
+.introCard .pBtn { width: 220px; margin: 0 auto; text-align: center; }
+.introCard .pBtn b { text-align: center; }
 
 /* plant interior overlay */
 .plantHud { position: absolute; inset: 0; pointer-events: none; z-index: 11; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; color: var(--text); }
