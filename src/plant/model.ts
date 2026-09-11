@@ -9,13 +9,14 @@ export const ROWS = 12;
 export const WORLD_W = COLS * TILE;
 export const WORLD_H = ROWS * TILE;
 
-export type Mat = "tailings" | "water" | "binder" | "thick" | "paste" | "pasteHP";
+export type Mat = "tailings" | "water" | "binder" | "thick" | "cake" | "paste" | "pasteHP";
 
 export const MAT: Record<Mat, { color: string; label: string }> = {
   tailings: { color: "#9a8763", label: "tailings" },
   water: { color: "#4aa8ff", label: "water" },
   binder: { color: "#e0cd94", label: "binder" },
   thick: { color: "#b58a4f", label: "thickened" },
+  cake: { color: "#c9b98f", label: "filter cake" },
   paste: { color: "#d98b2e", label: "paste" },
   pasteHP: { color: "#ffa733", label: "paste" },
 };
@@ -41,8 +42,9 @@ export const CATALOG: Record<string, Spec> = {
   src_tailings: { type: "src_tailings", label: "Tailings", kind: "source", w: 2, h: 2, cost: 0, cap: 90, inputs: [], output: "tailings", color: "#5b6b52", icon: "⛏" },
   src_water: { type: "src_water", label: "Water", kind: "source", w: 2, h: 2, cost: 0, cap: 200, inputs: [], output: "water", color: "#2f5f86", icon: "≈" },
   src_binder: { type: "src_binder", label: "Binder silo", kind: "source", w: 2, h: 2, cost: 0, cap: 200, inputs: [], output: "binder", color: "#7a6a3f", icon: "⬢" },
-  thickener: { type: "thickener", label: "Thickener", kind: "transform", w: 2, h: 2, cost: 40000, cap: 60, inputs: ["tailings"], ratios: [1.0], output: "thick", color: "#3f5566", icon: "◍", buildable: true },
-  mixer: { type: "mixer", label: "Mixer", kind: "transform", w: 2, h: 2, cost: 55000, cap: 60, inputs: ["thick", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#5a4a63", icon: "✳", buildable: true },
+  thickener: { type: "thickener", label: "Thickener", kind: "transform", w: 2, h: 2, cost: 40000, cap: 75, inputs: ["tailings"], ratios: [1.0], output: "thick", color: "#3f5566", icon: "◍", buildable: true },
+  filter: { type: "filter", label: "Filter", kind: "transform", w: 2, h: 2, cost: 45000, cap: 65, inputs: ["thick"], ratios: [1.0], output: "cake", color: "#3f6653", icon: "▤", buildable: true },
+  mixer: { type: "mixer", label: "Mixer", kind: "transform", w: 2, h: 2, cost: 55000, cap: 60, inputs: ["cake", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#5a4a63", icon: "✳", buildable: true },
   pump: { type: "pump", label: "Pump", kind: "transform", w: 2, h: 2, cost: 35000, cap: 70, inputs: ["paste"], ratios: [1.0], output: "pasteHP", color: "#664338", icon: "⚙", buildable: true },
   shaft: { type: "shaft", label: "Shaft", kind: "sink", w: 2, h: 2, cost: 0, cap: 999, inputs: ["pasteHP"], output: null, color: "#3a3f4a", icon: "▼" },
 };
