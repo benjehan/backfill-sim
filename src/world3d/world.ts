@@ -282,7 +282,10 @@ export class World {
         s.pressureMpa = 0; s.plugDrift = 0; // trucked (CAF) — no pipeline pressure
       }
 
-      let delta = Math.min(this.pourRatePerDay() * f * fill.rateMult * dd, s.volumeM3 - s.placedM3);
+      // plug (seal the barricade) and cap (working surface) pours are slower/careful
+      const frac = s.placedM3 / s.volumeM3;
+      const subRate = frac < 0.08 ? 0.5 : frac > 0.92 ? 0.7 : 1;
+      let delta = Math.min(this.pourRatePerDay() * f * fill.rateMult * subRate * dd, s.volumeM3 - s.placedM3);
       const need = (delta * this.recipe.binderKgPerM3 * fill.binderMult) / 1000; // tonnes
       if (need > 0 && this.binderTonnes < need) {
         delta *= this.binderTonnes / need; this.binderTonnes = 0;
@@ -638,8 +641,11 @@ export class World {
       const pcls = margin < 0.08 ? "red" : margin < 0.2 ? "amber" : "green";
       const plugTxt = st.plugDrift > 0.5 ? "HIGH — flush!" : st.plugDrift > 0.25 ? "building" : "clear";
       const plugCls = st.plugDrift > 0.5 ? "red" : st.plugDrift > 0.25 ? "amber" : "green";
+      const fr = st.placedM3 / st.volumeM3;
+      const phase = fr < 0.08 ? "① Plug pour — sealing the barricade" : fr > 0.92 ? "③ Cap pour — working surface" : "② Main pour";
       body = `
-        <div class="pRow">Pouring · <b>${st.cls?.name}</b> · rating ${rating} MPa</div>
+        <div class="pRow"><b class="cap">${phase}</b></div>
+        <div class="pRow">Pouring · <b>${st.cls?.name ?? FILL_TYPES[st.fillType].short}</b>${st.cls ? " · rating " + rating + " MPa" : ""}</div>
         <div class="pSplit"><span>Line pressure</span><b class="${pcls === "red" ? "pLate" : ""}">${st.pressureMpa.toFixed(1)} MPa</b></div>
         <div class="pBar"><div class="pBarFill ${pcls}" style="width:${pfrac}%"></div></div>
         <div class="pSplit"><span>Flow <b>${st.flowFactor.toFixed(2)}×</b></span>
