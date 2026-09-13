@@ -134,6 +134,17 @@ export class Plant {
     return this.add(type, col, row);
   }
 
+  /** Relocate a machine (keeping its connections) if the new footprint is free. */
+  move(id: string, col: number, row: number): boolean {
+    const m = this.getMachine(id);
+    if (!m) return false;
+    const s = this.spec(m);
+    if (s.kind === "source" || s.kind === "sink") return false; // fixtures stay
+    if (!this.footprintFree(col, row, s.w, s.h, id)) return false;
+    m.col = col; m.row = row;
+    return true;
+  }
+
   removeMachine(id: string) {
     const m = this.getMachine(id);
     if (!m) return;

@@ -432,6 +432,15 @@ select, input[type=number] {
 .phTitle { background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 9px 14px; font-weight: 700; backdrop-filter: blur(3px); }
 .phTitle b { color: var(--accent); } .phTitle b.good { color: var(--green); }
 .phStatus { position: absolute; left: 50%; bottom: 138px; transform: translateX(-50%); background: rgba(11,19,27,.8); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; max-width: 480px; text-align: center; backdrop-filter: blur(3px); }
+/* plant equipment detail panel */
+.phDetail { position: absolute; right: 18px; top: 70px; width: 240px; background: rgba(11,19,27,.9); border: 1px solid var(--line); border-radius: 12px; padding: 14px; pointer-events: auto; backdrop-filter: blur(4px); }
+.pdHead { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 800; color: var(--accent); margin-bottom: 8px; }
+.pdRow { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.pdRow.muted { color: var(--muted); }
+.pdRow b.st-running { color: var(--green); } .pdRow b.st-starved { color: var(--red); } .pdRow b.st-throttled { color: var(--amber); }
+.pdBtns { display: flex; gap: 6px; margin-top: 10px; }
+.pdBtns .palBtn { flex: 1; flex-direction: row; justify-content: center; padding: 8px; font-size: 12px; }
+.pdBtns .palBtn.danger { border-color: var(--red); color: #ffb3b3; }
 
 /* lab panel */
 .whLab.on { background: var(--accent); color: #10202b; }
