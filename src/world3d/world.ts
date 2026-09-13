@@ -66,6 +66,7 @@ export class World {
   private powered = 0; private total = 0;
   private buildings: Placed[] = [];
   private selectedStope: StopeUG | null = null;
+  private selectedBuilding: Placed | null = null;
 
   // live clock
   private day = 1;
@@ -224,7 +225,7 @@ export class World {
   }
 
   private descend() {
-    this.disarm();
+    this.disarm(); this.deselectBuilding();
     this.mode = "underground";
     this.surfaceRoot.setEnabled(false);
     this.underground.root.setEnabled(true);
@@ -247,7 +248,7 @@ export class World {
   }
 
   private enterPlant() {
-    this.disarm();
+    this.disarm(); this.deselectBuilding();
     this.mode = "plant";
     this.surfaceRoot.setEnabled(false);
     this.setSky(true);
@@ -496,13 +497,13 @@ export class World {
       }
       return;
     }
-    // surface: click a building to enter/inspect it when not placing
+    // surface: click a building to inspect it (details panel) when not placing
     if (!this.armed) {
       if (pi.type === PointerEventTypes.POINTERTAP && pi.event.button !== 2) {
-        const hit = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (m) => !!(m.metadata as any)?.buildingType);
-        const bt = (hit?.pickedMesh?.metadata as any)?.buildingType as string | undefined;
-        if (bt === "plant") this.enterPlant();
-        else if (bt) { const spec = specOf(bt); this.hud.setStatus(`${spec.label} · upkeep ${fmtMoney(spec.opexPerDay)}/day`); }
+        const hit = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (m) => (m.metadata as any)?.bi !== undefined);
+        const bi = (hit?.pickedMesh?.metadata as any)?.bi as number | undefined;
+        if (bi !== undefined && this.buildings[bi]) this.selectBuilding(this.buildings[bi]);
+        else this.deselectBuilding();
       }
       return;
     }
@@ -559,7 +560,8 @@ export class World {
   }
 
   private place(spec: BuildingSpec, at: Vector3) {
-    const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type }; });
+    const bi = this.buildings.length;
+    const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type, bi }; });
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     this.cash -= spec.cost;
     this.opexPerDay += spec.opexPerDay;
@@ -622,6 +624,39 @@ export class World {
 
   private updateEconomy() { this.hud.setEconomy(this.cash, this.powered, this.total); this.hud.setBinder(this.binderTonnes, BINDER_SILO_CAP); }
   private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher"); }
+  private isPowered(b: Placed) {
+    if (!b.spec.needsPower) return true;
+    return this.buildings.some((s) => s.spec.powerRadius && Vector3.Distance(s.pos, b.pos) <= (s.spec.powerRadius ?? 0));
+  }
+
+  // ---- surface building selection + details ---------------------------------
+  private selectBuilding(b: Placed) {
+    this.deselectBuilding();
+    this.selectedBuilding = b;
+    b.root.getChildMeshes().forEach((m) => { m.renderOutline = true; m.outlineColor = Color3.FromHexString("#ffffff"); m.outlineWidth = 0.3; });
+    this.hud.setPanel(this.buildingPanel(b));
+    this.hud.setPanelVisible(true);
+  }
+  private deselectBuilding() {
+    if (this.selectedBuilding) this.selectedBuilding.root.getChildMeshes().forEach((m) => { m.renderOutline = false; });
+    this.selectedBuilding = null;
+    this.hud.setPanelVisible(false);
+  }
+  private buildingPanel(b: Placed): string {
+    const s = b.spec;
+    const roles: string[] = [];
+    if (s.powerRadius) roles.push(`Supplies power to a ${s.powerRadius}-unit radius`);
+    if (s.needsPower) roles.push(this.isPowered(b) ? "Powered ✓" : "⚠ Out of power range");
+    if (s.spawnsWorkers) roles.push(`Employs ${s.spawnsWorkers} crew`);
+    if (s.spawnsTrucks) roles.push(`Runs ${s.spawnsTrucks} haul trucks`);
+    if (s.type === "crusher") roles.push("Enables CAF (crushed aggregate) fills");
+    if (s.type === "plant") roles.push("The backfill plant — step inside to build the process line");
+    return `<div class="pHead">${s.icon} ${s.label} <span class="pClose" data-act="closebuilding">✕</span></div>
+      <div class="pMeta">${roles.join("<br>")}</div>
+      <div class="pSplit"><span>Upkeep</span><b>${fmtMoney(s.opexPerDay)}/day</b></div>
+      <div class="pSplit"><span>Build cost</span><b>${fmtMoney(s.cost)}</b></div>
+      ${s.type === "plant" ? `<button class="pBtn primary" data-act="enterplant"><b>Step inside ▶</b></button>` : ""}`;
+  }
 
   private updateMarker(b: Placed, showRed: boolean) {
     if (showRed && !b.marker) {
@@ -775,6 +810,8 @@ export class World {
   private onPanelAction(act: string) {
     if (act === "restart") { location.reload(); return; }
     if (act.startsWith("ev:")) { this.resolveEvent(+act.slice(3)); return; }
+    if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
+    if (act === "closebuilding") { this.deselectBuilding(); return; }
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;

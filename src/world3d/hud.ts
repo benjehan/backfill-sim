@@ -140,6 +140,7 @@ export class Hud {
 
   setStatus(text: string) { this.statusEl.textContent = text; }
   setPanel(html: string) { this.panel.innerHTML = html; }
+  setPanelVisible(v: boolean) { this.panel.classList.toggle("hidden", !v); }
 
   setClock(day: number, paused: boolean, speedIdx: number, _speeds: number[]) {
     this.dayEl.textContent = `Day ${Math.floor(day)}`;
