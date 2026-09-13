@@ -130,8 +130,8 @@ export class World {
       onPanelAction: (a) => this.onPanelAction(a),
       onPause: () => { this.paused = !this.paused; this.refreshClock(); },
       onSpeed: (i) => { this.speedIdx = i; this.paused = false; this.refreshClock(); },
-      onLab: () => this.hud.toggleLab(this.labReadout()),
-      onRecipe: (solids, binder) => { this.recipe.solids = solids; this.recipe.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); },
+      onLab: () => { const r = this.activeRecipe(); this.hud.setLabRecipe(r.solids, r.binderKgPerM3); this.hud.toggleLab(this.labReadout()); },
+      onRecipe: (solids, binder) => { const r = this.activeRecipe(); r.solids = solids; r.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); if (this.mode === "underground" && this.selectedStope) this.renderStopePanel(); },
       onBinderTopup: () => {
         if (this.cash < BINDER_TOPUP_COST) { this.hud.setStatus(`Not enough cash for a binder truck top-up (${fmtMoney(BINDER_TOPUP_COST)}).`); return; }
         this.cash -= BINDER_TOPUP_COST; this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_TOPUP_TONNES);
@@ -293,7 +293,7 @@ export class World {
         else s.plugDrift = Math.max(0, s.plugDrift - 0.22 * dd);
         s.plugDrift = Math.min(1, s.plugDrift);
         const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
-        s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipe.solids));
+        s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipeFor(s).solids));
         if (s.pressureMpa > s.cls.ratingMpa) {
           this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY;
           this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
@@ -307,13 +307,13 @@ export class World {
       const frac = s.placedM3 / s.volumeM3;
       const subRate = frac < 0.08 ? 0.5 : frac > 0.92 ? 0.7 : 1;
       let delta = Math.min(this.pourRatePerDay() * f * fill.rateMult * subRate * dd, s.volumeM3 - s.placedM3);
-      const need = (delta * this.recipe.binderKgPerM3 * fill.binderMult) / 1000; // tonnes
+      const need = (delta * this.recipeFor(s).binderKgPerM3 * fill.binderMult) / 1000; // tonnes
       if (need > 0 && this.binderTonnes < need) {
         delta *= this.binderTonnes / need; this.binderTonnes = 0;
         if (Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(`⚠ Binder silo dry — ${s.id} pour stalled. Order a truck top-up or wait for rail.`);
       } else this.binderTonnes -= need;
       s.placedM3 += delta;
-      this.cash -= recipeCostPerM3(this.recipe) * fill.costMult * delta;
+      this.cash -= recipeCostPerM3(this.recipeFor(s)) * fill.costMult * delta;
       if (s.placedM3 >= s.volumeM3) {
         this.underground.completePour(s, this.day);
         this.cash += fillRevenue(s.volumeM3);
@@ -335,13 +335,13 @@ export class World {
     for (const s of this.underground.stopes) {
       if (s.status === "curing" && !s.ucs7Reported && this.day - s.cureStartDay >= this.underground.cureDaysFor(s) * 0.5) {
         s.ucs7Reported = true;
-        const ucs7 = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult * 0.6;
+        const ucs7 = ucs28Kpa(this.recipeFor(s)) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult * 0.6;
         s.ucs7Kpa = Math.round(ucs7);
         this.hud.setStatus(`${s.id} 7-day cylinder ${s.ucs7Kpa} kPa — ${ucs7 >= s.targetUcsKpa * 0.6 ? "on track" : "LOW, 28-day may fail"}.`);
       }
     }
     for (const s of ev.newlyCured) {
-      const achieved = ucs28Kpa(this.recipe) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
+      const achieved = ucs28Kpa(this.recipeFor(s)) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
       s.ucsAchievedKpa = Math.round(achieved);
       s.ucsPass = achieved >= s.targetUcsKpa;
       this.hud.setStatus(`${s.id} 28-day cylinder ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa — ${s.ucsPass ? "PASS ✓" : "FAIL ✗ (geotech won't sign the hand-back)"}.`);
@@ -421,16 +421,35 @@ export class World {
     };
   }
 
+  /** The mix the Lab currently edits + the pour/QA uses: the selected stope's, else the default. */
+  private recipeFor(st: StopeUG) { return st.recipe ?? this.recipe; }
+  private activeRecipe() {
+    const st = this.selectedStope;
+    if (st) { if (!st.recipe) st.recipe = { ...this.recipe }; return st.recipe; }
+    return this.recipe;
+  }
+
+  /** A compact mix line for the stope panel with predicted strength vs target. */
+  private recipeSummary(st: StopeUG): string {
+    const r = this.recipeFor(st);
+    const ucs = ucs28Kpa(r) * FILL_TYPES[st.fillType].ucsMult;
+    const ok = ucs >= st.targetUcsKpa;
+    return `<div class="pSplit"><span>Mix ${(r.solids * 100).toFixed(0)}% · ${r.binderKgPerM3} kg/m³</span><b class="${ok ? "good" : "pLate"}">${ucs.toFixed(0)}/${st.targetUcsKpa} kPa</b></div>
+      <div class="pNote">Tune this stope's mix in the 🧪 Lab.</div>`;
+  }
+
   private labReadout(): string {
-    const r = this.recipe;
+    const st = this.selectedStope;
+    const r = st?.recipe ?? this.recipe;
     const ucs = ucs28Kpa(r);
     const pump = pumpability(r.solids);
-    const maxTarget = Math.max(...this.underground.stopes.map((s) => s.targetUcsKpa));
-    const strengthOk = ucs >= maxTarget;
-    return `
+    const target = st ? st.targetUcsKpa : Math.max(...this.underground.stopes.map((s) => s.targetUcsKpa));
+    const strengthOk = ucs >= target;
+    const forWho = st ? `for ${st.id}` : "default mix";
+    return `<div class="labFor">Tuning: <b>${forWho}</b></div>` + `
       <div class="labRow"><span>${yieldStressPa(r.solids).toFixed(0)} Pa</span><small>yield stress</small></div>
       <div class="labRow"><span>${frictionKpaPerM(r.solids).toFixed(1)} kPa/m</span><small>friction gradient</small></div>
-      <div class="labRow"><span class="${strengthOk ? "good" : "bad"}">${ucs.toFixed(0)} kPa</span><small>predicted 28-day UCS (need ${maxTarget})</small></div>
+      <div class="labRow"><span class="${strengthOk ? "good" : "bad"}">${ucs.toFixed(0)} kPa</span><small>predicted 28-day UCS (need ${target})</small></div>
       <div class="labRow"><span>$${recipeCostPerM3(r).toFixed(1)}/m³</span><small>paste cost</small></div>
       <div class="labLight ${pump.level}">Pumpability: ${pump.label}</div>`;
   }
@@ -665,7 +684,7 @@ export class World {
         : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
     } else if (st.status === "available" && !ft.reticulated) {
       const canCaf = this.hasCrusher();
-      body = `${fillPick}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;
+      body = `${fillPick}${this.recipeSummary(st)}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;
     } else if (st.status === "available") {
       const net = this.underground.net;
       const rows = net.pathFor(idx).map((seg) => {
@@ -683,7 +702,7 @@ export class World {
       }).join("");
       const canBuild = net.pathCanBuild(idx);
       const planned = net.pathPlannedCost(idx);
-      body = `${fillPick}
+      body = `${fillPick}${this.recipeSummary(st)}
         <div class="pNote">Design each leg: pick a class that out-rates its pressure. Deeper legs carry more head — a borehole ⌇ choke relieves everything below it. Legs are shared between stopes.</div>
         ${this.hglChart(idx)}
         <div class="segList">${rows}</div>
@@ -737,7 +756,7 @@ export class World {
         ${ucs7}`;
     } else { // cured — reconciliation / stope de-brief
       const onTime = st.cureStartDay <= st.dueDay;
-      const binderT = Math.round((st.placedM3 * this.recipe.binderKgPerM3 * ft.binderMult) / 1000);
+      const binderT = Math.round((st.placedM3 * this.recipeFor(st).binderKgPerM3 * ft.binderMult) / 1000);
       const verdict = st.ucsPass === false
         ? `<span class="pLate">✗ ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa FAIL</span>`
         : `<span class="good">✓ ${st.ucsAchievedKpa}/${st.targetUcsKpa} kPa</span>`;

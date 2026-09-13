@@ -33,6 +33,10 @@ export class Hud {
   private rootEl: HTMLElement;
   private labPanel!: HTMLElement;
   private labReadoutEl!: HTMLElement;
+  private labS!: HTMLInputElement;
+  private labB!: HTMLInputElement;
+  private labSV!: HTMLElement;
+  private labBV!: HTMLElement;
   private binderV!: HTMLElement;
   private binderBar!: HTMLElement;
   private buttons = new Map<string, HTMLButtonElement>();
@@ -92,7 +96,8 @@ export class Hud {
     root.querySelector("#labClose")!.addEventListener("click", () => this.labPanel.classList.add("hidden"));
     const inS = root.querySelector("#inSolids") as HTMLInputElement;
     const inB = root.querySelector("#inBinder") as HTMLInputElement;
-    const sV = root.querySelector("#labSolidsV")!, bV = root.querySelector("#labBinderV")!;
+    const sV = root.querySelector("#labSolidsV") as HTMLElement, bV = root.querySelector("#labBinderV") as HTMLElement;
+    this.labS = inS; this.labB = inB; this.labSV = sV; this.labBV = bV;
     const emit = () => { sV.textContent = (+inS.value).toFixed(1) + "%"; bV.textContent = inB.value + " kg/m³"; cb.onRecipe(+inS.value / 100, +inB.value); };
     inS.addEventListener("input", emit); inB.addEventListener("input", emit);
     this.labReadoutEl = labReadout as HTMLElement;
@@ -173,4 +178,8 @@ export class Hud {
   setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }
   toggleLab(readout: string) { this.labPanel.classList.toggle("hidden"); if (!this.labPanel.classList.contains("hidden")) this.setLabReadout(readout); }
   setLabReadout(html: string) { this.labReadoutEl.innerHTML = html; }
+  setLabRecipe(solids: number, binder: number) {
+    this.labS.value = String(solids * 100); this.labB.value = String(binder);
+    this.labSV.textContent = (solids * 100).toFixed(1) + "%"; this.labBV.textContent = binder + " kg/m³";
+  }
 }

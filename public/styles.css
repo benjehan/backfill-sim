@@ -459,6 +459,8 @@ select, input[type=number] {
 .labRow span { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .labRow span.good { color: var(--green); } .labRow span.bad { color: var(--red); }
 .labRow small { color: var(--muted); font-size: 11px; }
+.labFor { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.labFor b { color: var(--accent); }
 .labLight { margin-top: 10px; padding: 7px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; }
 .labLight.green { background: #10241a; color: #a9e9c8; border: 1px solid var(--green); }
 .labLight.amber { background: #241a10; color: #ffd79a; border: 1px solid var(--amber); }

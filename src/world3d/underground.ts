@@ -55,6 +55,8 @@ export interface StopeUG {
   signBarricade?: boolean;
   signPourNote?: boolean;
   signLowStart?: boolean;
+  // per-stope mix design (inherits the campaign default until tuned)
+  recipe?: { solids: number; binderKgPerM3: number };
 }
 
 const UNIT_M = 7.5;
