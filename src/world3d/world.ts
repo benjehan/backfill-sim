@@ -720,7 +720,8 @@ export class World {
         <div class="pSplit"><span>Fill</span><b>${ft.label}</b></div>
         <div class="pSplit"><span>Binder used</span><b>~${binderT.toLocaleString()} t</b></div>
         <div class="pSplit"><span>28-day UCS</span><b>${verdict}</b></div>
-        <div class="pSplit"><span>Hand-back</span><b>${onTime ? "on time" : "late"}</b></div>`;
+        <div class="pSplit"><span>Hand-back</span><b>${onTime ? "on time" : "late"}</b></div>
+        ${st.ucsPass === false ? `<button class="pBtn" data-act="remediate"><b>Remediate &amp; re-pour</b><span>${fmtMoney(2_000_000)} — reset the stope to re-pour</span></button>` : ""}`;
     }
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
   }
@@ -731,6 +732,13 @@ export class World {
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;
+    if (act === "remediate") {
+      if (st.ucsPass !== false) return;
+      if (this.cash < 2_000_000) { this.hud.setStatus(`Not enough cash to remediate ${st.id} (${fmtMoney(2_000_000)}).`); return; }
+      this.cash -= 2_000_000; this.underground.remediate(st); this.updateEconomy(); this.renderStopePanel();
+      this.hud.setStatus(`${st.id} remediation ordered (${fmtMoney(2_000_000)}) — re-pour required.`);
+      return;
+    }
     if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
     if (act === "truck") {
       if (!this.hasCrusher()) { this.hud.setStatus("CAF needs crushed aggregate — build a Crusher plant on the surface first."); return; }

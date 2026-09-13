@@ -242,6 +242,15 @@ export class Underground {
     this.paint(stope, day);
   }
 
+  /** Remediate a failed stope: reset it for a re-pour (reticulation, if built, survives). */
+  remediate(stope: StopeUG) {
+    stope.status = stope.cls ? "piped" : "available";
+    stope.placedM3 = 0; stope.ucsPass = null; stope.ucsAchievedKpa = 0; stope.ucs7Reported = false; stope.ucs7Kpa = 0;
+    stope.signBarricade = stope.signPourNote = stope.signLowStart = false;
+    stope.plugDrift = 0; stope.pressureMpa = 0; stope.flowFactor = 1;
+    this.paint(stope, 0);
+  }
+
   /** Line burst — pour aborts, reticulation survives, stope must be re-poured. */
   burst(stope: StopeUG) {
     stope.status = "piped"; stope.placedM3 = 0;
