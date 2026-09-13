@@ -623,8 +623,34 @@ export class World {
     this.renderStopePanel();
   }
 
+  /** HGL chart: pressure held by each leg vs its pipe rating, down the path. */
+  private hglChart(idx: number): string {
+    const net = this.underground.net;
+    const path = net.pathFor(idx);
+    const W = 250, H = 112, pad = 16;
+    const maxP = Math.max(...path.map((s) => Math.max(net.pressureMpa(s), net.cls(s)?.ratingMpa ?? 0)), 20) * 1.15;
+    const n = path.length;
+    const xAt = (i: number) => pad + (n > 1 ? (i / (n - 1)) * (W - 2 * pad) : 0);
+    const yAt = (p: number) => H - pad - (p / maxP) * (H - 2 * pad);
+    const pPts = path.map((s, i) => `${xAt(i).toFixed(0)},${yAt(net.pressureMpa(s)).toFixed(0)}`).join(" ");
+    const rPts = path.map((s, i) => `${xAt(i).toFixed(0)},${yAt(net.cls(s)?.ratingMpa ?? 0).toFixed(0)}`).join(" ");
+    const dots = path.map((s, i) => {
+      const p = net.pressureMpa(s), r = net.cls(s)?.ratingMpa ?? 0;
+      const col = r > 0 && p > r ? "#ff5a5a" : p < 3 ? "#ffb020" : "#39d98a";
+      return `<circle cx="${xAt(i).toFixed(0)}" cy="${yAt(p).toFixed(0)}" r="3" fill="${col}"/>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" class="hgl">
+      <line class="hglAxis" x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}"/>
+      <polyline class="hglRating" points="${rPts}"/>
+      <polyline class="hglLine" points="${pPts}"/>${dots}
+      <text x="${pad}" y="11" class="hglLbl">HGL — line pressure vs rating (MPa)</text>
+      <text x="${pad}" y="${H - 3}" class="hglLbl">shaft → level → stope · green safe · red over · amber slack</text>
+    </svg>`;
+  }
+
   private renderStopePanel() {
     const st = this.selectedStope; if (!st) return;
+    const idx = this.underground.stopes.indexOf(st);
     const head = staticHeadMpa(st.depthM);
     const dueLate = this.day > st.dueDay && (st.status === "available" || st.status === "piped");
     const due = `<span class="${dueLate ? "pLate" : ""}">${dueLate ? "OVERDUE" : "due day " + st.dueDay}</span>`;
@@ -642,7 +668,6 @@ export class World {
       body = `${fillPick}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;
     } else if (st.status === "available") {
       const net = this.underground.net;
-      const idx = this.underground.stopes.indexOf(st);
       const rows = net.pathFor(idx).map((seg) => {
         const p = net.pressureMpa(seg);
         const c = net.cls(seg);
@@ -660,6 +685,7 @@ export class World {
       const planned = net.pathPlannedCost(idx);
       body = `${fillPick}
         <div class="pNote">Design each leg: pick a class that out-rates its pressure. Deeper legs carry more head — a borehole ⌇ choke relieves everything below it. Legs are shared between stopes.</div>
+        ${this.hglChart(idx)}
         <div class="segList">${rows}</div>
         <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : "set a valid class on every leg"}</span></button>`;
     } else if (st.status === "piped") {
@@ -668,6 +694,7 @@ export class World {
       const ready = st.signBarricade && st.signPourNote;
       body = `
         <div class="pRow">${ft.reticulated ? "Reticulated · <b>" + (st.cls?.name ?? "") + "</b>" + (st.choke ? " + choke" : "") : "Trucked (CAF) · ready to place"}</div>
+        ${ft.reticulated ? this.hglChart(idx) : ""}
         <div class="pNote">Pre-pour sign-off — skip an item and it bites later:</div>
         <div class="chkList">
           ${chk("Barricade", !!st.signBarricade, "Barricade built &amp; signed off")}
