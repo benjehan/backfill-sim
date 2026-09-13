@@ -43,11 +43,19 @@ export const CATALOG: Record<string, Spec> = {
   src_tailings: { type: "src_tailings", label: "Tailings", kind: "source", w: 2, h: 2, cost: 0, cap: 90, inputs: [], output: "tailings", color: "#5b6b52", icon: "⛏" },
   src_water: { type: "src_water", label: "Water", kind: "source", w: 2, h: 2, cost: 0, cap: 200, inputs: [], output: "water", color: "#2f5f86", icon: "≈" },
   src_binder: { type: "src_binder", label: "Binder silo", kind: "source", w: 2, h: 2, cost: 0, cap: 200, inputs: [], output: "binder", color: "#7a6a3f", icon: "⬢" },
-  thickener: { type: "thickener", label: "Thickener", kind: "transform", w: 2, h: 2, cost: 40000, cap: 80, inputs: ["tailings"], ratios: [1.0], output: "thick", color: "#3f5566", icon: "◍", buildable: true },
+  // Thickeners — high-rate (cheap, lower density) vs paste/UHD (dearer, higher throughput)
+  thickener_hr: { type: "thickener_hr", label: "High-rate thickener", kind: "transform", w: 2, h: 2, cost: 30000, cap: 65, inputs: ["tailings"], ratios: [1.0], output: "thick", color: "#3f5566", icon: "◍", buildable: true },
+  thickener_uhd: { type: "thickener_uhd", label: "Paste thickener (UHD)", kind: "transform", w: 2, h: 2, cost: 55000, cap: 90, inputs: ["tailings"], ratios: [1.0], output: "thick", color: "#4a6273", icon: "◍", buildable: true },
   cyclone: { type: "cyclone", label: "Cyclone", kind: "transform", w: 2, h: 2, cost: 38000, cap: 72, inputs: ["thick"], ratios: [1.0], output: "sized", color: "#4a6b7a", icon: "◐", buildable: true },
-  filter: { type: "filter", label: "Filter", kind: "transform", w: 2, h: 2, cost: 45000, cap: 65, inputs: ["sized"], ratios: [1.0], output: "cake", color: "#3f6653", icon: "▤", buildable: true },
-  mixer: { type: "mixer", label: "Mixer", kind: "transform", w: 2, h: 2, cost: 55000, cap: 60, inputs: ["cake", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#5a4a63", icon: "✳", buildable: true },
-  pump: { type: "pump", label: "Pump", kind: "transform", w: 2, h: 2, cost: 35000, cap: 70, inputs: ["paste"], ratios: [1.0], output: "pasteHP", color: "#664338", icon: "⚙", buildable: true },
+  // Filters — vacuum disc (cheap, continuous) vs pressure (dearer, drier/higher)
+  filter_vac: { type: "filter_vac", label: "Vacuum disc filter", kind: "transform", w: 2, h: 2, cost: 40000, cap: 60, inputs: ["sized"], ratios: [1.0], output: "cake", color: "#3f6653", icon: "▤", buildable: true },
+  filter_press: { type: "filter_press", label: "Pressure filter", kind: "transform", w: 2, h: 2, cost: 62000, cap: 78, inputs: ["sized"], ratios: [1.0], output: "cake", color: "#4a7a5f", icon: "▦", buildable: true },
+  // Mixers — twin-shaft (standard) vs continuous (higher throughput)
+  mixer_twin: { type: "mixer_twin", label: "Twin-shaft mixer", kind: "transform", w: 2, h: 2, cost: 55000, cap: 60, inputs: ["cake", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#5a4a63", icon: "✳", buildable: true },
+  mixer_cont: { type: "mixer_cont", label: "Continuous mixer", kind: "transform", w: 2, h: 2, cost: 78000, cap: 85, inputs: ["cake", "binder", "water"], ratios: [0.82, 0.06, 0.12], output: "paste", color: "#6a5573", icon: "✳", buildable: true },
+  // Pumps — centrifugal (cheap, lower duty) vs positive-displacement piston (high duty)
+  pump_cent: { type: "pump_cent", label: "Centrifugal pump", kind: "transform", w: 2, h: 2, cost: 30000, cap: 60, inputs: ["paste"], ratios: [1.0], output: "pasteHP", color: "#664338", icon: "⚙", buildable: true },
+  pump_pd: { type: "pump_pd", label: "PD piston pump", kind: "transform", w: 2, h: 2, cost: 48000, cap: 88, inputs: ["paste"], ratios: [1.0], output: "pasteHP", color: "#71493c", icon: "⚙", buildable: true },
   shaft: { type: "shaft", label: "Shaft", kind: "sink", w: 2, h: 2, cost: 0, cap: 999, inputs: ["pasteHP"], output: null, color: "#3a3f4a", icon: "▼" },
 };
 

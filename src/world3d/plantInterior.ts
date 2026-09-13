@@ -18,7 +18,10 @@ const T3 = 3;                       // world units per plant tile
 const OX = -(COLS * T3) / 2;
 const OZ = -(ROWS * T3) / 2;
 const EQUIP_COST_MULT = 100;        // scale the model's costs to mining capital
-const BUILDABLE = ["thickener", "cyclone", "filter", "mixer", "pump"];
+const BUILDABLE = ["thickener_hr", "thickener_uhd", "cyclone", "filter_vac", "filter_press", "mixer_twin", "mixer_cont", "pump_cent", "pump_pd"];
+const familyOf = (type: string) =>
+  type.startsWith("thickener") ? "thickener" : type.startsWith("filter") ? "filter" : type.startsWith("mixer") ? "mixer"
+  : type.startsWith("pump") ? "pump" : type.startsWith("cyclone") ? "cyclone" : type.startsWith("src_") ? "source" : type;
 const STATE_EMIT: Record<string, string> = { running: "#194b32", throttled: "#4a3a10", starved: "#4a1414", idle: "#101418", off: "#101418" };
 
 function mat(scene: Scene, hex: string) { const m = new StandardMaterial("pm", scene); m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black(); return m; }
@@ -95,7 +98,7 @@ export class PlantInterior {
     const box = (w: number, h: number, d: number) => MeshBuilder.CreateBox("mp", { width: w, height: h, depth: d }, this.scene);
     const cyl = (dia: number, h: number, tess = 14) => MeshBuilder.CreateCylinder("mp", { diameter: dia, height: h, tessellation: tess }, this.scene);
     const col = s.color;
-    switch (type) {
+    switch (familyOf(type)) {
       case "thickener":
         put(cyl(5.2, 2.2), 0, 1.6, 0, col); put(cyl(0.8, 4, 8), 0, 3.3, 0, "#c7ccd1"); put(box(5.4, 0.4, 0.8), 0, 2.9, 0, "#8a8f96"); break;
       case "cyclone":
@@ -107,7 +110,7 @@ export class PlantInterior {
         put(box(4.4, 3.2, 4.4), 0, 2, 0, col); put(cyl(0.7, 3, 8), 0, 4.5, 0, "#c7ccd1"); put(box(1.6, 1.4, 1.6), 1.6, 5.2, 0, "#556170"); break;
       case "pump":
         put(box(3.4, 2, 4), -0.6, 1.5, 0, col); put(cyl(2.2, 3, 12), 1.2, 2.5, 0, "#664338"); put(box(1.6, 1.4, 2), -1.8, 2, 0, "#556170"); break;
-      case "src_tailings": case "src_water": case "src_binder":
+      case "source":
         put(cyl(4, 5, 12), 0, 3, 0, col); put(MeshBuilder.CreateCylinder("mp", { diameterTop: 0, diameterBottom: 4.2, height: 1.4, tessellation: 12 }, this.scene), 0, 6.2, 0, col); break;
       case "shaft":
         put(box(5, 1, 5), 0, 0.5, 0, col); put(box(0.8, 9, 0.8), 1.6, 5, 1.6, "#4c5a66"); put(box(0.8, 9, 0.8), -1.6, 5, -1.6, "#4c5a66");
@@ -309,16 +312,16 @@ export class PlantInterior {
 
   /** Debug/testing: place and wire a full working line. */
   debugBuildLine() {
-    this.plant.place("thickener", 3, 1); this.plant.place("cyclone", 6, 1); this.plant.place("filter", 9, 1); this.plant.place("mixer", 12, 4); this.plant.place("pump", 15, 4);
+    this.plant.place("thickener_hr", 3, 1); this.plant.place("cyclone", 6, 1); this.plant.place("filter_vac", 9, 1); this.plant.place("mixer_twin", 12, 4); this.plant.place("pump_cent", 15, 4);
     const id = (t: string) => this.plant.machines.find((m) => m.type === t)!.id;
-    this.plant.connect(id("src_tailings"), 0, id("thickener"), 0);
-    this.plant.connect(id("thickener"), 0, id("cyclone"), 0);
-    this.plant.connect(id("cyclone"), 0, id("filter"), 0);
-    this.plant.connect(id("filter"), 0, id("mixer"), 0);
-    this.plant.connect(id("src_binder"), 0, id("mixer"), 1);
-    this.plant.connect(id("src_water"), 0, id("mixer"), 2);
-    this.plant.connect(id("mixer"), 0, id("pump"), 0);
-    this.plant.connect(id("pump"), 0, id("shaft"), 0);
+    this.plant.connect(id("src_tailings"), 0, id("thickener_hr"), 0);
+    this.plant.connect(id("thickener_hr"), 0, id("cyclone"), 0);
+    this.plant.connect(id("cyclone"), 0, id("filter_vac"), 0);
+    this.plant.connect(id("filter_vac"), 0, id("mixer_twin"), 0);
+    this.plant.connect(id("src_binder"), 0, id("mixer_twin"), 1);
+    this.plant.connect(id("src_water"), 0, id("mixer_twin"), 2);
+    this.plant.connect(id("mixer_twin"), 0, id("pump_cent"), 0);
+    this.plant.connect(id("pump_cent"), 0, id("shaft"), 0);
     this.rebuild(); this.solveSync();
   }
 

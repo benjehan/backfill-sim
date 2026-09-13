@@ -342,7 +342,7 @@ select, input[type=number] {
 .whStat b { font-size: 16px; color: var(--accent); }
 .whStat b.bad { color: var(--red); }
 .whStatus { position: absolute; left: 50%; bottom: 138px; transform: translateX(-50%); background: rgba(11,19,27,.8); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; max-width: 480px; text-align: center; backdrop-filter: blur(3px); pointer-events: none; }
-.whPalette { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; padding: 8px; background: rgba(11,19,27,.62); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(4px); }
+.whPalette { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; max-width: 92vw; gap: 8px; pointer-events: auto; padding: 8px; background: rgba(11,19,27,.62); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(4px); }
 .palBtn { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 84px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 8px 4px; cursor: pointer; }
 .palBtn:hover { border-color: var(--accent); }
 .palBtn.on { background: var(--accent); color: #10202b; border-color: var(--accent); }
