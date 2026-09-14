@@ -10,7 +10,7 @@ import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Vector3, Quaternion } from "@babylonjs/core/Maths/math.vector";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { PointerEventTypes } from "@babylonjs/core/Events/pointerEvents";
 import "@babylonjs/core/Culling/ray";
@@ -65,6 +65,7 @@ export class World {
   private recipe: Recipe = { ...DEFAULT_RECIPE };
   private cash = START_CASH;
   private powered = 0; private total = 0;
+  private energized: Placed[] = [];
   private buildings: Placed[] = [];
   private selectedStope: StopeUG | null = null;
   private selectedBuilding: Placed | null = null;
@@ -638,16 +639,33 @@ export class World {
     }
   }
 
+  /** Sources that are actually live: the power station(s), plus any substation relay
+   *  reachable through a chain of energised sources. */
+  private energizedSources(): Placed[] {
+    const roots = this.buildings.filter((b) => b.spec.powerRadius && !b.spec.needsPower);
+    const relays = this.buildings.filter((b) => b.spec.powerRadius && b.spec.needsPower);
+    const energized = [...roots];
+    for (let pass = 0; pass < relays.length + 1; pass++) {
+      let added = false;
+      for (const r of relays) {
+        if (energized.includes(r)) continue;
+        if (energized.some((s) => Vector3.Distance(s.pos, r.pos) <= (s.spec.powerRadius ?? 0))) { energized.push(r); added = true; }
+      }
+      if (!added) break;
+    }
+    return energized;
+  }
+
   private recomputePower() {
-    const sources = this.buildings.filter((b) => b.spec.powerRadius);
+    this.energized = this.energizedSources();
     this.powered = 0;
     for (const b of this.buildings) {
-      const ok = !b.spec.needsPower || sources.some((s) => Vector3.Distance(s.pos, b.pos) <= (s.spec.powerRadius ?? 0));
+      const ok = this.isPowered(b);
       this.updateMarker(b, !ok && b.spec.needsPower);
       if (ok) this.powered++;
     }
     this.total = this.buildings.length;
-    this.drawPowerLines(sources);
+    this.drawPowerLines(this.energized);
     this.updateEconomy();
   }
 
@@ -701,24 +719,55 @@ export class World {
   }
   private refreshSupply() { this.plantInterior.setSupply(this.interiorSupply()); this.drawSupplyLinks(); }
 
-  /** Draw inbound feed lines from each supply building to the plant. */
+  private linkMat(hex: string): StandardMaterial {
+    const m = new StandardMaterial("lk" + hex, this.scene);
+    m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black();
+    m.emissiveColor = Color3.FromHexString(hex).scale(0.12);
+    return m;
+  }
+
+  /** A raised pipe run between two points, on support posts down to the ground. */
+  private pipeLink(a: Vector3, c: Vector3, dia: number, hex: string) {
+    const dir = c.subtract(a); const len = dir.length(); if (len < 1) return;
+    const pipe = MeshBuilder.CreateCylinder("splink", { diameter: dia, height: len, tessellation: 8 }, this.scene);
+    pipe.material = this.linkMat(hex); pipe.position = Vector3.Center(a, c);
+    const nd = dir.normalizeToNew(); const axis = Vector3.Cross(Vector3.Up(), nd);
+    if (axis.lengthSquared() > 1e-6) pipe.rotationQuaternion = Quaternion.RotationAxis(axis.normalize(), Math.acos(Math.max(-1, Math.min(1, Vector3.Dot(Vector3.Up(), nd)))));
+    pipe.parent = this.surfaceRoot; pipe.isPickable = false; this.supplyLinkMeshes.push(pipe);
+    const posts = Math.max(1, Math.floor(len / 26));
+    for (let i = 1; i <= posts; i++) {
+      const p = Vector3.Lerp(a, c, i / (posts + 1));
+      const gy = heightAt(p.x, p.z); const h = Math.max(0.6, p.y - gy);
+      const post = MeshBuilder.CreateCylinder("splpost", { diameter: 0.6, height: h, tessellation: 6 }, this.scene);
+      post.material = this.linkMat("#5a5148"); post.position.set(p.x, gy + h / 2, p.z);
+      post.parent = this.surfaceRoot; post.isPickable = false; this.supplyLinkMeshes.push(post);
+    }
+  }
+
+  /** Draw the surface reticulation: feed pipes from each supply work to the plant,
+   *  and the mill's tailings line out to the TSF (the forced ~half). */
   private drawSupplyLinks() {
     this.supplyLinkMeshes.forEach((m) => m.dispose()); this.supplyLinkMeshes = [];
-    const plant = this.buildings.find((b) => b.spec.type === "plant"); if (!plant) return;
-    const colFor: Record<string, string> = { tailings: "#9a8763", binder: "#e0cd94", water: "#4aa8ff" };
-    for (const b of this.buildings) {
-      if (!b.spec.supplies) continue;
-      const a = new Vector3(b.pos.x, b.pos.y + 2, b.pos.z);
-      const c = new Vector3(plant.pos.x, plant.pos.y + 2, plant.pos.z);
-      const mid = Vector3.Center(a, c); mid.y += 1.5;
-      const line = MeshBuilder.CreateLines("supply", { points: [a, mid, c] }, this.scene);
-      line.color = Color3.FromHexString(colFor[b.spec.supplies]); line.parent = this.surfaceRoot; line.isPickable = false;
-      this.supplyLinkMeshes.push(line);
+    const colFor: Record<string, string> = { tailings: "#9a8763", binder: "#e6d2a0", water: "#5aa0e0" };
+    const diaFor: Record<string, number> = { tailings: 2.0, binder: 1.3, water: 1.3 };
+    const at = (b: Placed, dy: number) => new Vector3(b.pos.x, b.pos.y + dy, b.pos.z);
+    const plant = this.buildings.find((b) => b.spec.type === "plant");
+    if (plant) for (const b of this.buildings) {
+      const mat = b.spec.supplies; if (!mat) continue;
+      this.pipeLink(at(b, 6), at(plant, 6), diaFor[mat], colFor[mat]);
+    }
+    // mill → nearest TSF: the tailings that can't be reused
+    const mill = this.buildings.find((b) => b.spec.type === "mill");
+    const tsfs = this.buildings.filter((b) => b.spec.tsfCap);
+    if (mill && tsfs.length) {
+      let best = tsfs[0], bd = Infinity;
+      for (const t of tsfs) { const d = Vector3.Distance(mill.pos, t.pos); if (d < bd) { bd = d; best = t; } }
+      this.pipeLink(at(mill, 6), at(best, 6), 1.8, "#9a8763");
     }
   }
   private isPowered(b: Placed) {
     if (!b.spec.needsPower) return true;
-    return this.buildings.some((s) => s.spec.powerRadius && Vector3.Distance(s.pos, b.pos) <= (s.spec.powerRadius ?? 0));
+    return this.energized.some((s) => Vector3.Distance(s.pos, b.pos) <= (s.spec.powerRadius ?? 0));
   }
 
   // ---- surface building selection + details ---------------------------------

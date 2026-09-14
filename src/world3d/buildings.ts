@@ -132,6 +132,23 @@ export const createWaterPump: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
+// ---- substation: relays power out to distant works -------------------------
+export const createSubstation: Build = (scene, onMesh) =>
+  rootOf(scene, "substation", () => {
+    const parts: Mesh[] = [];
+    const pad = box(scene, "spad", 8, 0.6, 8, "#6f7378"); pad.position.y = 0.3; parts.push(pad);
+    // two transformer cans
+    for (const x of [-1.8, 1.8]) {
+      const tf = cyl(scene, "stf", 2.4, 3.2, "#5b6570", 10); tf.position.set(x, 2.2, -1); parts.push(tf);
+      const lid = cyl(scene, "stflid", 2.6, 0.4, "#454e58", 10); lid.position.set(x, 3.9, -1); parts.push(lid);
+    }
+    // lattice pylon with a cross-arm + insulators
+    const mast = box(scene, "smast", 0.5, 8, 0.5, "#48535e"); mast.position.set(0, 4, 2.2); parts.push(mast);
+    const arm = box(scene, "sarm", 6, 0.4, 0.4, "#48535e"); arm.position.set(0, 7.4, 2.2); parts.push(arm);
+    for (const x of [-2.4, 0, 2.4]) { const ins = cyl(scene, "sins", 0.5, 1, "#c9cdd2", 6); ins.position.set(x, 6.8, 2.2); parts.push(ins); }
+    return parts;
+  }, onMesh);
+
 // ---- mine headframe: steel lattice + sheave wheels over the hoisting shaft --
 export const createHeadframe: Build = (scene, onMesh) =>
   rootOf(scene, "headframe", () => {
