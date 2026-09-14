@@ -39,7 +39,7 @@ export const CATALOG: BuildingSpec[] = [
   { type: "mill", label: "Mill (tailings)", icon: "⚙", cost: 20_000_000, fw: 20, fd: 14, markerY: 11, needsPower: true, opexPerDay: 60_000, supplies: "tailings", offPad: true, make: createMill },
   { type: "rail", label: "Rail terminal (binder)", icon: "🚆", cost: 10_000_000, fw: 24, fd: 8, markerY: 14, needsPower: true, opexPerDay: 25_000, supplies: "binder", offPad: true, make: createRail },
   { type: "waterpump", label: "Water pump", icon: "💧", cost: 6_000_000, fw: 11, fd: 11, markerY: 6, needsPower: true, opexPerDay: 15_000, supplies: "water", offPad: true, make: createWaterPump },
-  { type: "tsf", label: "Tailings dam (TSF)", icon: "⛰", cost: 15_000_000, fw: 42, fd: 42, markerY: 7, needsPower: false, opexPerDay: 22_000, tsfCap: 260_000, offPad: true, make: createTSF },
+  { type: "tsf", label: "Tailings dam (TSF)", icon: "⛰", cost: 15_000_000, fw: 42, fd: 42, markerY: 7, needsPower: false, opexPerDay: 22_000, tsfCap: 60_000, offPad: true, make: createTSF },
 ];
 
 export const specOf = (type: string) => CATALOG.find((c) => c.type === type)!;

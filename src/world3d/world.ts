@@ -83,6 +83,8 @@ export class World {
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
   private supplyLinkMeshes: Mesh[] = [];
+  private flowLinks: { src: Placed; a: Vector3; c: Vector3; beads: Mesh[]; lift: number }[] = [];
+  private flowPhase = 0;
   private activeEvent: GameEvent | null = null;
   private firedEvents = new Set<string>();
   private tempDeliveryMult = 1; private tempDeliveryUntil = 0;
@@ -154,7 +156,7 @@ export class World {
     this.engine.runRenderLoop(() => {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
       this.advanceTime(dt);
-      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt); }
+      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt); this.updateFlow(dt); }
       this.scene.render();
     });
     window.addEventListener("resize", () => this.engine.resize());
@@ -719,50 +721,97 @@ export class World {
   }
   private refreshSupply() { this.plantInterior.setSupply(this.interiorSupply()); this.drawSupplyLinks(); }
 
-  private linkMat(hex: string): StandardMaterial {
+  private linkMat(hex: string, emit = 0.12): StandardMaterial {
     const m = new StandardMaterial("lk" + hex, this.scene);
     m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black();
-    m.emissiveColor = Color3.FromHexString(hex).scale(0.12);
+    m.emissiveColor = Color3.FromHexString(hex).scale(emit);
     return m;
   }
-
-  /** A raised pipe run between two points, on support posts down to the ground. */
-  private pipeLink(a: Vector3, c: Vector3, dia: number, hex: string) {
-    const dir = c.subtract(a); const len = dir.length(); if (len < 1) return;
-    const pipe = MeshBuilder.CreateCylinder("splink", { diameter: dia, height: len, tessellation: 8 }, this.scene);
-    pipe.material = this.linkMat(hex); pipe.position = Vector3.Center(a, c);
-    const nd = dir.normalizeToNew(); const axis = Vector3.Cross(Vector3.Up(), nd);
-    if (axis.lengthSquared() > 1e-6) pipe.rotationQuaternion = Quaternion.RotationAxis(axis.normalize(), Math.acos(Math.max(-1, Math.min(1, Vector3.Dot(Vector3.Up(), nd)))));
-    pipe.parent = this.surfaceRoot; pipe.isPickable = false; this.supplyLinkMeshes.push(pipe);
-    const posts = Math.max(1, Math.floor(len / 26));
-    for (let i = 1; i <= posts; i++) {
-      const p = Vector3.Lerp(a, c, i / (posts + 1));
-      const gy = heightAt(p.x, p.z); const h = Math.max(0.6, p.y - gy);
-      const post = MeshBuilder.CreateCylinder("splpost", { diameter: 0.6, height: h, tessellation: 6 }, this.scene);
-      post.material = this.linkMat("#5a5148"); post.position.set(p.x, gy + h / 2, p.z);
-      post.parent = this.surfaceRoot; post.isPickable = false; this.supplyLinkMeshes.push(post);
-    }
+  private post(p: Vector3) {
+    const gy = heightAt(p.x, p.z); const h = Math.max(0.6, p.y - gy);
+    const post = MeshBuilder.CreateCylinder("splpost", { diameter: 0.6, height: h, tessellation: 6 }, this.scene);
+    post.material = this.linkMat("#5a5148", 0); post.position.set(p.x, gy + h / 2, p.z);
+    post.parent = this.surfaceRoot; post.isPickable = false; this.supplyLinkMeshes.push(post);
   }
 
-  /** Draw the surface reticulation: feed pipes from each supply work to the plant,
-   *  and the mill's tailings line out to the TSF (the forced ~half). */
+  /** Build one supply link (pipe for slurry/liquids, conveyor belt for the mill→plant line),
+   *  with support posts and travelling flow beads that animate while the source is live. */
+  private makeLink(src: Placed, a: Vector3, c: Vector3, hex: string, kind: "pipe" | "conveyor", dia: number) {
+    const dir = c.subtract(a); const len = dir.length(); if (len < 1) return;
+    const nd = dir.normalizeToNew();
+    if (kind === "pipe") {
+      const pipe = MeshBuilder.CreateCylinder("splink", { diameter: dia, height: len, tessellation: 8 }, this.scene);
+      pipe.material = this.linkMat(hex); pipe.position = Vector3.Center(a, c);
+      const axis = Vector3.Cross(Vector3.Up(), nd);
+      if (axis.lengthSquared() > 1e-6) pipe.rotationQuaternion = Quaternion.RotationAxis(axis.normalize(), Math.acos(Math.max(-1, Math.min(1, Vector3.Dot(Vector3.Up(), nd)))));
+      pipe.parent = this.surfaceRoot; pipe.isPickable = false; this.supplyLinkMeshes.push(pipe);
+    } else {
+      // flat belt on trestles: yaw to heading, pitch to slope (keeps the belt top level)
+      const yaw = Math.atan2(dir.x, dir.z), pitch = -Math.atan2(dir.y, Math.hypot(dir.x, dir.z));
+      const q = Quaternion.RotationYawPitchRoll(yaw, pitch, 0);
+      const belt = MeshBuilder.CreateBox("splbelt", { width: 3, height: 0.5, depth: len }, this.scene);
+      belt.material = this.linkMat("#2c3138", 0); belt.position = Vector3.Center(a, c); belt.rotationQuaternion = q.clone();
+      belt.parent = this.surfaceRoot; belt.isPickable = false; this.supplyLinkMeshes.push(belt);
+      for (const sx of [-1.7, 1.7]) {
+        const rail = MeshBuilder.CreateBox("splrail", { width: 0.3, height: 0.8, depth: len }, this.scene);
+        rail.material = this.linkMat("#6a7480", 0); rail.rotationQuaternion = q.clone();
+        rail.position = Vector3.Center(a, c).add(new Vector3(Math.cos(yaw) * sx, 0.5, -Math.sin(yaw) * sx));
+        rail.parent = this.surfaceRoot; rail.isPickable = false; this.supplyLinkMeshes.push(rail);
+      }
+    }
+    const posts = Math.max(1, Math.floor(len / 24));
+    for (let i = 1; i <= posts; i++) this.post(Vector3.Lerp(a, c, i / (posts + 1)));
+    // flow beads
+    const beads: Mesh[] = [];
+    const bmat = this.linkMat(hex, 0.9);
+    for (let i = 0; i < 4; i++) {
+      const bead = kind === "conveyor"
+        ? MeshBuilder.CreateBox("splbead", { size: 1.6 }, this.scene)
+        : MeshBuilder.CreateSphere("splbead", { diameter: Math.max(1, dia * 0.95), segments: 6 }, this.scene);
+      bead.material = bmat; bead.parent = this.surfaceRoot; bead.isPickable = false; bead.setEnabled(false);
+      beads.push(bead); this.supplyLinkMeshes.push(bead);
+    }
+    this.flowLinks.push({ src, a, c, beads, lift: kind === "conveyor" ? 0.6 : 0 });
+  }
+
+  /** Draw the surface reticulation: mill→plant conveyor + feed pipes to the plant,
+   *  and the mill's slurry line out to the TSF (the forced ~half). */
   private drawSupplyLinks() {
     this.supplyLinkMeshes.forEach((m) => m.dispose()); this.supplyLinkMeshes = [];
-    const colFor: Record<string, string> = { tailings: "#9a8763", binder: "#e6d2a0", water: "#5aa0e0" };
+    this.flowLinks = [];
+    const colFor: Record<string, string> = { tailings: "#c2a86a", binder: "#e6d2a0", water: "#5aa0e0" };
     const diaFor: Record<string, number> = { tailings: 2.0, binder: 1.3, water: 1.3 };
     const at = (b: Placed, dy: number) => new Vector3(b.pos.x, b.pos.y + dy, b.pos.z);
     const plant = this.buildings.find((b) => b.spec.type === "plant");
     if (plant) for (const b of this.buildings) {
       const mat = b.spec.supplies; if (!mat) continue;
-      this.pipeLink(at(b, 6), at(plant, 6), diaFor[mat], colFor[mat]);
+      // mill's tailings ride a conveyor belt to the plant; binder/water are piped
+      const kind = b.spec.type === "mill" ? "conveyor" : "pipe";
+      this.makeLink(b, at(b, 6), at(plant, 6), colFor[mat], kind, diaFor[mat]);
     }
-    // mill → nearest TSF: the tailings that can't be reused
+    // mill → nearest TSF: slurry line for the tailings that can't be reused
     const mill = this.buildings.find((b) => b.spec.type === "mill");
     const tsfs = this.buildings.filter((b) => b.spec.tsfCap);
     if (mill && tsfs.length) {
       let best = tsfs[0], bd = Infinity;
       for (const t of tsfs) { const d = Vector3.Distance(mill.pos, t.pos); if (d < bd) { bd = d; best = t; } }
-      this.pipeLink(at(mill, 6), at(best, 6), 1.8, "#9a8763");
+      this.makeLink(mill, at(mill, 6), at(best, 6), "#9a8763", "pipe", 1.8);
+    }
+  }
+
+  /** Animate flow beads travelling source→destination while the source is powered and time runs. */
+  private updateFlow(dt: number) {
+    this.flowPhase += dt * this.speed;
+    for (const link of this.flowLinks) {
+      const active = !this.paused && !this.ended && this.isPowered(link.src);
+      const n = link.beads.length;
+      for (let i = 0; i < n; i++) {
+        const bead = link.beads[i];
+        if (!active) { bead.setEnabled(false); continue; }
+        const t = ((this.flowPhase * 0.16 + i / n) % 1 + 1) % 1;
+        const p = Vector3.Lerp(link.a, link.c, t);
+        bead.setEnabled(true); bead.position.set(p.x, p.y + link.lift, p.z);
+      }
     }
   }
   private isPowered(b: Placed) {

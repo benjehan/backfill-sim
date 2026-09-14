@@ -21,7 +21,7 @@ export const ORE_PAD_CAP = 45_000;         // ROM stockpile capacity (t)
 export const TAILINGS_BUFFER_CAP = 9_000;  // thickened-tailings surge buffer feeding the plant (t)
 export const WATER_POND_CAP = 60_000;      // process-water pond (m³)
 export const WATER_PUMP_M3_PER_DAY = 9_000;// pumped raw-water make-up per day
-export const TSF_CAP_PER_CELL = 260_000;   // storage added by each TSF (t); raise the dam for more
+export const TSF_CAP_PER_CELL = 60_000;    // storage added by each TSF (t); ~half a campaign's tailings, so a raise is forced mid-run
 export const TSF_RAISE_FRACTION = 0.5;     // each dam lift adds 50% of the base cell capacity
 export const TSF_MAX_RAISES = 4;           // upstream raises get impractical beyond a few lifts
 /** Effective storage of one TSF after `raises` lifts. */
