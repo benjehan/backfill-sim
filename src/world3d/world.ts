@@ -699,7 +699,7 @@ export class World {
   private updateEconomy() {
     this.hud.setEconomy(this.cash, this.powered, this.total);
     this.hud.setBinder(this.supply.binder.level, this.supply.binder.cap);
-    this.hud.setResources({ ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome });
+    this.hud.setResources({ reserve: this.supply.oreReserve, ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome });
     this.updateTsfVisuals();
   }
   /** Raise each TSF's tailings surface to match the site fill fraction. */
@@ -718,7 +718,6 @@ export class World {
     const tsfCap = this.buildings.reduce((a, b) => a + (b.spec.tsfCap ? tsfCapacity(b.spec.tsfCap, b.raises) : 0), 0);
     return {
       mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"),
-      reserves: this.underground.counts().cured < this.underground.stopes.length,
       tsfCap,
     };
   }

@@ -182,7 +182,7 @@ export class Hud {
   private resEl?: HTMLElement;
   private incomeEl?: HTMLElement;
   setResources(r: {
-    ore: { level: number; cap: number }; tailings: { level: number; cap: number };
+    reserve: { level: number; cap: number }; ore: { level: number; cap: number }; tailings: { level: number; cap: number };
     water: { level: number; cap: number }; tsf: { level: number; cap: number }; income: number;
   }) {
     this.incomeEl ??= this.rootEl.querySelector("#whIncome") as HTMLElement;
@@ -198,6 +198,7 @@ export class Hud {
       return `<div class="resRow"><span class="resL">${label}</span><div class="resTrack"><div class="resFill ${tone}" style="width:${pct}%"></div></div><b class="resV">${val}</b></div>`;
     };
     this.resEl.innerHTML =
+      bar("Orebody", "t", r.reserve) +
       bar("Ore (ROM)", "t", r.ore) +
       bar("Tailings buf", "t", r.tailings) +
       bar("Water pond", "m³", r.water) +

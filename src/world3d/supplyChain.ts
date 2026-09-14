@@ -17,6 +17,7 @@ export const MILL_NET_PER_T = 145;         // net concentrate value per tonne mi
 export const TAILINGS_YIELD = 0.92;        // tonnes of tailings per tonne of ore milled
 export const TAILINGS_REUSE = 0.5;         // at most ~half of tailings can return underground
 
+export const ORE_RESERVE_START = 170_000;  // the orebody — hoisting depletes it; the mine runs down late-campaign
 export const ORE_PAD_CAP = 45_000;         // ROM stockpile capacity (t)
 export const TAILINGS_BUFFER_CAP = 9_000;  // thickened-tailings surge buffer feeding the plant (t)
 export const WATER_POND_CAP = 60_000;      // process-water pond (m³)
@@ -44,7 +45,6 @@ export interface SupplyBuildings {
   mill: boolean;   // a powered mill is present
   rail: boolean;   // a powered rail terminal is present
   water: boolean;  // a powered water pump is present
-  reserves: boolean; // ore remains to be hoisted
   tsfCap: number;  // total TSF storage capacity available (0 = no TSF)
 }
 
@@ -59,6 +59,7 @@ export interface DayResult {
 export interface Draw { m3: number; limiting: "tailings" | "water" | "binder" | null; }
 
 export class SupplyChain {
+  oreReserve: Stock = { level: ORE_RESERVE_START, cap: ORE_RESERVE_START }; // the orebody in the ground
   ore: Stock = { level: 0, cap: ORE_PAD_CAP };
   tailings: Stock = { level: 0, cap: TAILINGS_BUFFER_CAP };
   binder: Stock = { level: START_BINDER_T, cap: 4_000 };
@@ -70,8 +71,11 @@ export class SupplyChain {
     const notes: string[] = [];
     this.tsf.cap = b.tsfCap;
 
-    // Hoist ore to the ROM pad (the mine runs while reserves remain).
-    if (b.reserves) this.ore.level = Math.min(this.ore.cap, this.ore.level + MINE_HOIST_TPD * dd);
+    // Hoist ore to the ROM pad, drawing down the finite orebody.
+    const hoist = Math.min(MINE_HOIST_TPD * dd, this.oreReserve.level, this.ore.cap - this.ore.level);
+    this.ore.level += hoist; this.oreReserve.level = Math.max(0, this.oreReserve.level - hoist);
+    if (this.oreReserve.level <= 0 && this.ore.level < 1) notes.push("Orebody exhausted — no ore left to hoist or mill. Wind the operation down.");
+    else if (this.oreReserve.level > 0 && this.oreReserve.level < ORE_RESERVE_START * 0.15) notes.push("Orebody running low — the mine is near end of life.");
 
     // Mill ore → concentrate + tailings, but only as fast as the tailings have somewhere to go.
     let milled = 0, revenue = 0, toTsf = 0;
