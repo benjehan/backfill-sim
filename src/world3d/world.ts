@@ -313,10 +313,12 @@ export class World {
         const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
         s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipeFor(s).solids));
         if (s.pressureMpa > s.cls.ratingMpa) {
+          this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
           this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY;
           this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
           continue;
         }
+        this.underground.net.flowPulse(this.underground.stopes.indexOf(s), this.day); // paste flowing down the line
       } else {
         s.pressureMpa = 0; s.plugDrift = 0; // trucked (CAF) — no pipeline pressure
       }
@@ -336,6 +338,7 @@ export class World {
       s.placedM3 += delta;
       this.cash -= recipeCostPerM3(this.recipeFor(s)) * fill.costMult * delta;
       if (s.placedM3 >= s.volumeM3) {
+        this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
         this.underground.completePour(s, this.day);
         this.cash += fillRevenue(s.volumeM3);
         this.hud.setStatus(`${s.id} ${fill.label} complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);

@@ -48,23 +48,23 @@ export class Reticulation {
     };
     const cyl = (name: string, dia: number, h: number) => MeshBuilder.CreateCylinder(name, { diameter: dia, height: h, tessellation: 8 }, this.scene);
 
-    // borehole legs down the shaft
+    // borehole legs down the shaft (chunky trunk main)
     for (let i = 0; i < 3; i++) {
       const top = i === 0 ? 0 : LEVEL_Y[i - 1];
-      const m = cyl("B" + (i + 1), 1.0, Math.abs(LEVEL_Y[i] - top));
+      const m = cyl("B" + (i + 1), 1.7, Math.abs(LEVEL_Y[i] - top));
       m.position.set(2.4, (top + LEVEL_Y[i]) / 2, 0);
       add({ id: "B" + (i + 1), kind: "borehole", label: `Borehole ${i === 0 ? "surface" : DEPTHS[i - 1] + "m"}→${DEPTHS[i]}m`, levelIdx: i, lengthM: BORE_LEN, cumLenM: BORE_LEN * (i + 1), choke: false, classId: null, built: false }, m);
     }
-    // level runs
+    // level runs (drive-level distribution pipe)
     for (let i = 0; i < 3; i++) {
-      const m = cyl("R" + (i + 1), 0.9, 58); m.rotation.z = Math.PI / 2; m.position.set(31, LEVEL_Y[i] + 2.4, 0);
+      const m = cyl("R" + (i + 1), 1.35, 58); m.rotation.z = Math.PI / 2; m.position.set(31, LEVEL_Y[i] + 2.4, 0);
       add({ id: "R" + (i + 1), kind: "level", label: `Level ${DEPTHS[i]}m run`, levelIdx: i, lengthM: RUN_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN, choke: false, classId: null, built: false }, m);
     }
     // stope branches (two per level, at x = 32 and 56)
     let n = 1;
     for (let i = 0; i < 3; i++) {
       for (const sx of [32, 56]) {
-        const m = cyl("Br" + n, 0.8, 15); m.rotation.x = Math.PI / 2; m.position.set(sx, LEVEL_Y[i] + 2.4, 8);
+        const m = cyl("Br" + n, 1.15, 15); m.rotation.x = Math.PI / 2; m.position.set(sx, LEVEL_Y[i] + 2.4, 8);
         add({ id: "Br" + n, kind: "branch", label: `Branch to S${n}`, levelIdx: i, lengthM: BRANCH_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN + BRANCH_LEN, choke: false, classId: null, built: false }, m);
         n++;
       }
@@ -155,4 +155,17 @@ export class Reticulation {
     if (stopeIdx == null) return;
     for (const s of this.pathFor(stopeIdx)) { s.mesh.renderOutline = true; s.mesh.outlineColor = Color3.FromHexString("#ffffff"); s.mesh.outlineWidth = 0.25; }
   }
+
+  /** Animate paste flowing down the active path during a pour (pulsing amber glow). */
+  flowPulse(stopeIdx: number, phase: number) {
+    const path = this.pathFor(stopeIdx);
+    for (let k = 0; k < path.length; k++) {
+      const m = path[k].mesh.material as StandardMaterial | null; if (!m) continue;
+      // a bright band travels down the path (each leg offset in phase)
+      const wave = 0.5 + 0.5 * Math.sin(phase * 7 - k * 1.4);
+      m.emissiveColor = Color3.FromHexString("#e0a83a").scale(0.2 + wave * 0.7);
+    }
+  }
+  /** Stop the flow animation and restore the path's class colours. */
+  clearFlow(stopeIdx: number) { for (const s of this.pathFor(stopeIdx)) this.repaint(s); }
 }

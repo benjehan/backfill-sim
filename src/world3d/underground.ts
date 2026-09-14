@@ -25,6 +25,9 @@ export const FILL_TYPES: Record<string, FillType> = {
 export interface StopeUG {
   id: string;
   mesh: Mesh;
+  fillMesh: Mesh;      // paste that rises inside the void as it's poured/cured
+  floorY: number;      // world Y of the stope floor (fill grows up from here)
+  chamberH: number;    // interior height the fill can reach
   depthM: number;
   lengthM: number;
   volumeM3: number;
@@ -122,16 +125,25 @@ export class Underground {
       for (const sx of [32, 56]) {
         const cc = MeshBuilder.CreateBox("cc", { width: 5, height: 6, depth: 10 }, this.scene);
         cc.material = drive; cc.position.set(sx, lv.y, 8); cc.parent = this.root;
-        const chamber = MeshBuilder.CreateBox("stope", { width: 12, height: 11, depth: 12 }, this.scene);
-        chamber.material = mat(this.scene, STATUS_COLOR.locked);
+        const CH_H = 11;
+        const chamber = MeshBuilder.CreateBox("stope", { width: 12, height: CH_H, depth: 12 }, this.scene);
+        const chMat = mat(this.scene, STATUS_COLOR.locked); chMat.alpha = 0.32; // translucent void — see the fill inside
+        chamber.material = chMat;
         chamber.position.set(sx, lv.y + 1, 15);
         chamber.parent = this.root;
         chamber.outlineColor = Color3.FromHexString("#39d98a");
         chamber.outlineWidth = 0.35;
         this.shadow.addShadowCaster(chamber);
+        // paste fill inside the void — a unit-height box scaled in Y by the poured fraction
+        const floorY = lv.y + 1 - CH_H / 2;
+        const fill = MeshBuilder.CreateBox("stopefill", { width: 11, height: CH_H, depth: 11 }, this.scene);
+        fill.material = mat(this.scene, "#b5822f");
+        fill.position.set(sx, floorY, 15); // y re-set each paint so it grows up from the floor
+        fill.scaling.y = 0.0001; fill.parent = this.root; fill.setEnabled(false);
+        this.shadow.addShadowCaster(fill);
         const isPrimary = sx === 32; const levelIdx = LEVELS.indexOf(lv);
         this.stopes.push({
-          id: "", mesh: chamber, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
+          id: "", mesh: chamber, fillMesh: fill, floorY, chamberH: CH_H, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
           volumeM3: 9000 + sx * 90 + lv.depthM * 6, placedM3: 0,
           availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
@@ -210,6 +222,23 @@ export class Underground {
       else if (s.status === "cured") m.emissiveColor = Color3.FromHexString("#2a3a1a");
       else m.emissiveColor = Color3.Black();
     }
+    this.paintFill(s, day);
+  }
+
+  /** Grow the paste fill inside the void from the floor up, tinted wet-paste → cured-gold. */
+  private paintFill(s: StopeUG, day: number) {
+    const frac = s.status === "pouring" ? Math.min(1, s.placedM3 / s.volumeM3)
+      : (s.status === "curing" || s.status === "cured") ? 1 : 0;
+    const fm = s.fillMesh;
+    if (frac <= 0.001) { fm.setEnabled(false); return; }
+    fm.setEnabled(true);
+    fm.scaling.y = frac;
+    fm.position.y = s.floorY + (frac * s.chamberH) / 2; // bottom stays on the floor
+    const fmMat = fm.material as StandardMaterial;
+    // wet amber while placing, warms to cured gold as it sets
+    const cure = s.status === "cured" ? 1 : s.status === "curing" ? this.cureProgress(s, day) : 0;
+    fmMat.diffuseColor = Color3.Lerp(Color3.FromHexString("#a06f2a"), Color3.FromHexString("#d3a63a"), cure);
+    fmMat.emissiveColor = Color3.FromHexString("#3a2a10").scale(s.status === "pouring" ? 0.6 : 0.25);
   }
 
   /** Commit the designed reticulation path for a stope -> it becomes pourable. */
