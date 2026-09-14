@@ -18,7 +18,7 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 
 import { createTerrain, heightAt, PAD_RADIUS } from "./terrain.js";
-import { ghostify } from "./buildings.js";
+import { ghostify, createHeadframe } from "./buildings.js";
 import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
 import { TruckFleet } from "./trucks.js";
@@ -193,7 +193,7 @@ export class World {
   }
 
   private setupCamera() {
-    const cam = new ArcRotateCamera("cam", -Math.PI * 0.72, 0.86, 96, new Vector3(0, 4, 0), this.scene);
+    const cam = new ArcRotateCamera("cam", -Math.PI * 0.72, 0.80, 116, new Vector3(-10, 2, 0), this.scene);
     cam.attachControl(this.canvas, true);
     cam.lowerRadiusLimit = 40; cam.upperRadiusLimit = 210;
     cam.lowerBetaLimit = 0.2; cam.upperBetaLimit = 1.45;
@@ -214,12 +214,23 @@ export class World {
   private createPortal(): Vector3 {
     const x = -64, z = 10, y = heightAt(x, z);
     const mk = (hex: string) => { const m = new StandardMaterial("pm", this.scene); m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black(); return m; };
+    // benched box-cut: tan steps descending toward the adit, like ground cut into the slope
+    for (let k = 0; k < 3; k++) {
+      const w = 34 - k * 7, d = 30 - k * 6;
+      const bench = MeshBuilder.CreateBox("boxcut", { width: w, height: 1.2, depth: d }, this.scene);
+      bench.material = mk(k === 2 ? "#6b6256" : "#7c7060"); bench.position.set(x + 9 + k * 1.5, y + 0.6 - k * 1.4, z);
+      bench.parent = this.surfaceRoot; bench.receiveShadows = true;
+    }
+    // concrete adit set (portal collar) + dark mouth
     const frame = MeshBuilder.CreateBox("adit", { width: 11, height: 8, depth: 3 }, this.scene);
-    frame.material = mk("#5a5148"); frame.position.set(x, y + 3.5, z); frame.parent = this.surfaceRoot; this.shadow.addShadowCaster(frame);
-    const mouth = MeshBuilder.CreateBox("aditMouth", { width: 6.5, height: 5.5, depth: 1.2 }, this.scene);
-    mouth.material = mk("#14181d"); mouth.position.set(x, y + 3, z + 1.3); mouth.parent = this.surfaceRoot;
-    const apron = MeshBuilder.CreateGround("aditApron", { width: 12, height: 14 }, this.scene);
-    apron.material = mk("#6b6256"); apron.position.set(x + 5, y + 0.1, z); apron.parent = this.surfaceRoot;
+    frame.material = mk("#8c8478"); frame.position.set(x, y - 2.4 + 3.5, z); frame.parent = this.surfaceRoot; this.shadow.addShadowCaster(frame);
+    const lintel = MeshBuilder.CreateBox("aditLintel", { width: 12, height: 1.4, depth: 3.4 }, this.scene);
+    lintel.material = mk("#726a5d"); lintel.position.set(x, y - 2.4 + 7.4, z); lintel.parent = this.surfaceRoot;
+    const mouth = MeshBuilder.CreateBox("aditMouth", { width: 6.5, height: 5.5, depth: 1.4 }, this.scene);
+    mouth.material = mk("#0e1216"); mouth.position.set(x, y - 2.4 + 3, z + 1.3); mouth.parent = this.surfaceRoot;
+    // headframe over the hoisting shaft beside the portal — the ore-hoist that feeds the mill
+    const hf = createHeadframe(this.scene, (m) => this.shadow.addShadowCaster(m));
+    hf.position.set(x - 3, heightAt(x - 3, z - 20), z - 20); hf.parent = this.surfaceRoot;
     return new Vector3(x + 7, y, z);
   }
 
@@ -248,7 +259,7 @@ export class World {
     this.underground.root.setEnabled(false);
     this.surfaceRoot.setEnabled(true);
     this.setSky(false);
-    this.camera.setTarget(new Vector3(0, 4, 0)); this.camera.radius = 96; this.camera.beta = 0.86; this.camera.alpha = -Math.PI * 0.72;
+    this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
     this.hud.setMode("surface");
   }
 
@@ -269,7 +280,7 @@ export class World {
     this.plantInterior.exit();
     this.surfaceRoot.setEnabled(true);
     this.setSky(false);
-    this.camera.setTarget(new Vector3(0, 4, 0)); this.camera.radius = 96; this.camera.beta = 0.86; this.camera.alpha = -Math.PI * 0.72;
+    this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
     this.hud.setHidden(false);
   }
 

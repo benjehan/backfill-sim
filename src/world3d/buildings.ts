@@ -132,6 +132,37 @@ export const createWaterPump: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
+// ---- mine headframe: steel lattice + sheave wheels over the hoisting shaft --
+export const createHeadframe: Build = (scene, onMesh) =>
+  rootOf(scene, "headframe", () => {
+    const parts: Mesh[] = [];
+    const steel = "#48535e", dark = "#3a444d";
+    // hoist house at the base
+    const house = box(scene, "hfhouse", 9, 5, 7, "#8a7f6c"); house.position.set(-8, 2.5, 0); parts.push(house);
+    const houseRoof = box(scene, "hfroof", 9.4, 0.6, 7.4, "#5a4d3f"); houseRoof.position.set(-8, 5.3, 0); parts.push(houseRoof);
+    // four legs, splayed at the base (back pair vertical, front pair raked)
+    const legH = 22;
+    const legAt = (x: number, z: number, rake: number) => {
+      const leg = box(scene, "hfleg", 0.7, legH, 0.7, steel);
+      leg.position.set(x, legH / 2, z); leg.rotation.z = rake; parts.push(leg);
+    };
+    legAt(-2.4, -2.4, 0.16); legAt(-2.4, 2.4, 0.16);   // front (raked toward the sheave)
+    legAt(3.0, -2.4, -0.02); legAt(3.0, 2.4, -0.02);   // back (near-vertical)
+    // cross bracing on the two long faces
+    for (const z of [-2.4, 2.4]) for (let k = 0; k < 4; k++) {
+      const br = box(scene, "hfbr", 6.6, 0.35, 0.35, dark); br.position.set(0.3, 3 + k * 5, z); br.rotation.z = (k % 2 ? 0.5 : -0.5); parts.push(br);
+    }
+    // head platform + two sheave wheels
+    const plat = box(scene, "hfplat", 7, 1, 6, dark); plat.position.set(-0.4, legH + 0.4, 0); parts.push(plat);
+    for (const z of [-1.6, 1.6]) {
+      const wheel = cyl(scene, "hfwheel", 5, 0.6, "#6d7783", 20); wheel.rotation.x = Math.PI / 2; wheel.position.set(-1.5, legH + 3.4, z); parts.push(wheel);
+      const hub = cyl(scene, "hfhub", 1.2, 0.9, "#3a444d", 10); hub.rotation.x = Math.PI / 2; hub.position.set(-1.5, legH + 3.4, z); parts.push(hub);
+    }
+    // hoist ropes from the sheaves down into the house
+    for (const z of [-1.6, 1.6]) { const rope = cyl(scene, "hfrope", 0.14, legH, "#2a323a", 6); rope.position.set(-5, legH / 2 + 2, z); rope.rotation.z = 0.24; parts.push(rope); }
+    return parts;
+  }, onMesh);
+
 // ---- tailings storage facility: raised embankment + settling pond ----------
 export const createTSF: Build = (scene, onMesh) =>
   rootOf(scene, "tsf", () => {
