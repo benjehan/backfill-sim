@@ -8,6 +8,7 @@ import { Scene } from "@babylonjs/core/scene";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
@@ -40,6 +41,7 @@ const GREY = "#3a4048";
 export class Reticulation {
   readonly segs: Segment[] = [];
   private byId = new Map<string, Segment>();
+  private flowBeads = new Map<number, Mesh[]>();
 
   constructor(private scene: Scene, private root: TransformNode, shadow: ShadowGenerator) {
     const add = (s: Omit<Segment, "mesh">, mesh: Mesh) => {
@@ -156,16 +158,56 @@ export class Reticulation {
     for (const s of this.pathFor(stopeIdx)) { s.mesh.renderOutline = true; s.mesh.outlineColor = Color3.FromHexString("#ffffff"); s.mesh.outlineWidth = 0.25; }
   }
 
-  /** Animate paste flowing down the active path during a pour (pulsing amber glow). */
+  /** Animate paste flowing down the active path during a pour: a pulsing band on the
+   *  pipes plus paste beads travelling shaft→level→stope (matches the surface flow). */
   flowPulse(stopeIdx: number, phase: number) {
     const path = this.pathFor(stopeIdx);
     for (let k = 0; k < path.length; k++) {
       const m = path[k].mesh.material as StandardMaterial | null; if (!m) continue;
-      // a bright band travels down the path (each leg offset in phase)
       const wave = 0.5 + 0.5 * Math.sin(phase * 7 - k * 1.4);
       m.emissiveColor = Color3.FromHexString("#e0a83a").scale(0.2 + wave * 0.7);
     }
+    // travelling paste beads down the reticulation polyline
+    let beads = this.flowBeads.get(stopeIdx);
+    if (!beads) {
+      beads = [];
+      const bmat = new StandardMaterial("pbead", this.scene);
+      bmat.diffuseColor = Color3.FromHexString("#e0a83a"); bmat.emissiveColor = Color3.FromHexString("#e0a83a").scale(0.8); bmat.specularColor = Color3.Black();
+      for (let i = 0; i < 5; i++) {
+        const b = MeshBuilder.CreateSphere("pbead", { diameter: 1.3, segments: 6 }, this.scene);
+        b.material = bmat; b.parent = this.root; b.isPickable = false; beads.push(b);
+      }
+      this.flowBeads.set(stopeIdx, beads);
+    }
+    const pts = this.pathPoints(stopeIdx); const n = beads.length;
+    for (let i = 0; i < n; i++) {
+      const t = ((phase * 0.5 + i / n) % 1 + 1) % 1;
+      const p = posOnPolyline(pts, t);
+      beads[i].position.copyFrom(p); beads[i].setEnabled(true);
+    }
   }
-  /** Stop the flow animation and restore the path's class colours. */
-  clearFlow(stopeIdx: number) { for (const s of this.pathFor(stopeIdx)) this.repaint(s); }
+  /** Stop the flow animation, dispose beads, and restore the path's class colours. */
+  clearFlow(stopeIdx: number) {
+    for (const s of this.pathFor(stopeIdx)) this.repaint(s);
+    const beads = this.flowBeads.get(stopeIdx);
+    if (beads) { beads.forEach((b) => b.dispose()); this.flowBeads.delete(stopeIdx); }
+  }
+
+  /** The reticulation polyline a stope's paste follows: collar → down shaft → along level → into stope. */
+  private pathPoints(stopeIdx: number): Vector3[] {
+    const L = Math.floor(stopeIdx / 2); const sx = stopeIdx % 2 === 0 ? 32 : 56; const ly = LEVEL_Y[L] + 2.4;
+    return [new Vector3(2.4, 0, 0), new Vector3(2.4, ly, 0), new Vector3(sx, ly, 0), new Vector3(sx, ly, 12)];
+  }
+}
+
+/** Position at fraction t (0..1) along a multi-point polyline, by cumulative length. */
+function posOnPolyline(pts: Vector3[], t: number): Vector3 {
+  const segs: number[] = []; let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) { const d = Vector3.Distance(pts[i], pts[i + 1]); segs.push(d); total += d; }
+  let target = t * total;
+  for (let i = 0; i < segs.length; i++) {
+    if (target <= segs[i] || i === segs.length - 1) return Vector3.Lerp(pts[i], pts[i + 1], segs[i] ? target / segs[i] : 0);
+    target -= segs[i];
+  }
+  return pts[pts.length - 1].clone();
 }

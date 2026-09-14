@@ -35,7 +35,7 @@ import {
   BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
-import { SupplyChain, tsfCapacity, tsfRaiseCost, TSF_MAX_RAISES } from "./supplyChain.js";
+import { SupplyChain, tsfCapacity, tsfRaiseCost, TSF_MAX_RAISES, ORE_RESERVE_START } from "./supplyChain.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
@@ -163,6 +163,7 @@ export class World {
     });
     window.addEventListener("resize", () => this.engine.resize());
     (window as any).__world = this;
+    if (typeof location !== "undefined" && location.hash === "#autorun") setTimeout(() => this.debugAutoRun(), 400);
   }
 
   private maybeShowIntro() {
@@ -502,12 +503,14 @@ export class World {
     const cured = stopes.filter((s) => s.status === "cured").length;
     const passed = stopes.filter((s) => s.status === "cured" && s.ucsPass).length; // cured AND hit strength
     const onTime = stopes.filter((s) => s.status === "cured" && s.cureStartDay <= s.dueDay).length;
+    const minedFrac = 1 - this.supply.oreReserve.level / ORE_RESERVE_START; // how much of the orebody was monetised
     let score = 0;
     score += passed === total ? 3 : passed >= total - 1 ? 2 : passed >= total / 2 ? 1 : 0;
     score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
     score += this.cash > 0 ? 2 : 0;
     score += this.cash > START_CASH * 0.3 ? 1 : 0;
-    let grade = score >= 7 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D";
+    score += minedFrac > 0.8 ? 1 : 0; // reward extracting the resource before the horizon
+    let grade = score >= 8 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D";
     if (this.safetyIncidents > 0 && (grade === "S" || grade === "A")) grade = "B"; // a burst caps the review
     this.hud.showResult(`
       <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
@@ -515,6 +518,7 @@ export class World {
       <div class="rsRows">
         <div><span>Cylinders passed</span><b>${passed}/${total}</b></div>
         <div><span>On time</span><b>${onTime}/${total}</b></div>
+        <div><span>Orebody extracted</span><b>${Math.round(minedFrac * 100)}%</b></div>
         <div><span>Cash</span><b>${fmtMoney(this.cash)}</b></div>
         <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " burst" : "clean"}</b></div>
       </div>
@@ -1127,4 +1131,26 @@ export class World {
   debugPour(i: number) { this.underground.startPour(this.underground.stopes[i]); }
   debugSelect(i: number) { this.selectStope(this.underground.stopes[i]); }
   debugAdvance(days: number) { this.paused = false; const step = 0.25; for (let d = 0; d < days && !this.ended; d += step) this.advanceTime((SECONDS_PER_DAY * step) / this.speed); }
+
+  /** Headless self-play: stand up the chain, then reticulate + pour every stope as it frees up,
+   *  logging the economy each week. Drives the REAL game loop (not a projection). #autorun triggers it. */
+  debugAutoRun() {
+    const L = (s: string) => console.log("AUTORUN|" + s);
+    try {
+      for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
+      L(`built cash=${(this.cash / 1e6).toFixed(1)}m powered=${this.powered}/${this.total}`);
+      this.descend();
+      let guard = 0;
+      while (!this.ended && guard++ < 400) {
+        if (this.activeEvent) this.resolveEvent(0); // take the first option so the clock keeps running
+        this.underground.stopes.forEach((s, i) => { if (s.status === "available") { try { this.debugReticulate(i); } catch { /* path not buildable yet */ } } });
+        this.underground.stopes.forEach((s, i) => { if (s.status === "piped") { s.signBarricade = true; s.signPourNote = true; this.debugPour(i); } });
+        this.debugAdvance(2);
+        if (guard % 4 === 0) L(`day ${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m reserve=${Math.round(this.supply.oreReserve.level / 1000)}k rom=${Math.round(this.supply.ore.level / 1000)}k tsf=${Math.round(this.supply.tsf.level / 1000)}k binder=${Math.round(this.supply.binder.level)}t inc/d=$${Math.round(this.millDayIncome / 1000)}k`);
+      }
+      const c = this.underground.counts();
+      L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} reserveLeft=${Math.round(this.supply.oreReserve.level / 1000)}k`);
+      L("DONE");
+    } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }
+  }
 }
