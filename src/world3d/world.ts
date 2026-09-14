@@ -17,7 +17,7 @@ import "@babylonjs/core/Culling/ray";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 
-import { createTerrain, heightAt, PAD_RADIUS } from "./terrain.js";
+import { createTerrain, heightAt, PAD_RADIUS, TERRAIN_SIZE } from "./terrain.js";
 import { ghostify, createHeadframe } from "./buildings.js";
 import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
@@ -566,7 +566,7 @@ export class World {
     this.setGhostValid = ghostify(this.scene, this.ghost, spec.fw, spec.fd);
     this.camera.detachControl();
     this.hud.setArmed(spec.type);
-    this.hud.setStatus(`Placing ${spec.label} — click the graded pad. Right-click to cancel.`);
+    this.hud.setStatus(`Placing ${spec.label} — click ${spec.offPad ? "out on the terrain, off the plant pad" : "the graded pad"}. Right-click to cancel.`);
   }
 
   private disarm() {
@@ -577,7 +577,16 @@ export class World {
   }
 
   private canPlace(spec: BuildingSpec, x: number, z: number): boolean {
-    if (Math.hypot(x, z) > PAD_RADIUS - Math.max(spec.fw, spec.fd) * 0.35) return false;
+    const d = Math.hypot(x, z);
+    const half = Math.max(spec.fw, spec.fd) / 2;
+    if (spec.offPad) {
+      // big works site out on the terrain: clear of the plant pad, but on the map
+      if (d < PAD_RADIUS + half * 0.5) return false;
+      if (d > TERRAIN_SIZE / 2 - half - 6) return false;
+    } else {
+      // plant works sit on the graded pad near the origin
+      if (d > PAD_RADIUS - Math.max(spec.fw, spec.fd) * 0.35) return false;
+    }
     for (const b of this.buildings) {
       const gap = 3;
       if (Math.abs(x - b.pos.x) < (spec.fw + b.spec.fw) / 2 + gap &&
@@ -588,6 +597,7 @@ export class World {
 
   private place(spec: BuildingSpec, at: Vector3) {
     const bi = this.buildings.length;
+    if (spec.offPad) this.gradePlatform(at, spec.fw, spec.fd); // cut a flat bench into the slope first
     const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type, bi }; });
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     this.cash -= spec.cost;
@@ -600,6 +610,15 @@ export class World {
     this.refreshSupply();
     this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
+  }
+
+  /** Cut a flat gravel bench into the sloping terrain under an off-pad structure. */
+  private gradePlatform(at: Vector3, fw: number, fd: number) {
+    const pad = MeshBuilder.CreateBox("gradePad", { width: fw + 8, height: 9, depth: fd + 8 }, this.scene);
+    const m = new StandardMaterial("gradePadM", this.scene);
+    m.diffuseColor = Color3.FromHexString("#8f8578"); m.specularColor = Color3.Black();
+    pad.material = m; pad.position.set(at.x, at.y - 4.1, at.z); // top ~0.4 above ground, base sunk into the hill
+    pad.parent = this.surfaceRoot; pad.receiveShadows = true; pad.isPickable = false;
   }
 
   /** Haul roads from every building to the mine portal, so the site reads as connected. */
