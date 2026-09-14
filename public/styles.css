@@ -482,6 +482,16 @@ select, input[type=number] {
 .binderTrack { width: 70px; height: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
 .binderFill { height: 100%; background: var(--green); transition: width .2s; }
 .binderFill.amber { background: var(--amber); } .binderFill.red { background: var(--red); }
+
+/* surface materials economy panel — feed stocks + TSF */
+.whRes { position: absolute; top: 92px; right: 18px; width: 214px; display: flex; flex-direction: column; gap: 4px;
+  background: rgba(11,19,27,.72); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; backdrop-filter: blur(3px); }
+.resRow { display: flex; align-items: center; gap: 7px; }
+.resL { flex: 0 0 62px; font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.resTrack { flex: 1; height: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.resFill { height: 100%; background: var(--green); transition: width .25s; }
+.resFill.amber { background: var(--amber); } .resFill.red { background: var(--red); }
+.resV { flex: 0 0 auto; font-size: 10px; color: var(--fg); min-width: 46px; text-align: right; }
 .whTopup { position: absolute; right: 6px; top: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; font-size: 13px; cursor: pointer; pointer-events: auto; }
 .whTopup:hover { border-color: var(--accent); }
 

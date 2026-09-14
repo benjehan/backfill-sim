@@ -32,9 +32,10 @@ import {
   fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
   pourPressureMpa, BURST_PENALTY,
   SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, HORIZON_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
-  BINDER_SILO_CAP, BINDER_DELIVERY_PER_DAY, BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
+  BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
+import { SupplyChain } from "./supplyChain.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
@@ -68,17 +69,19 @@ export class World {
   private selectedStope: StopeUG | null = null;
   private selectedBuilding: Placed | null = null;
 
-  // live clock
+  // live clock — starts PAUSED: design / feasibility / lab is untimed; time runs when you press play
   private day = 1;
-  private paused = false;
+  private paused = true;
   private speedIdx = 1;
   private ended = false;
   private opexPerDay = 0;
   private safetyIncidents = 0;
-  private binderTonnes = BINDER_SILO_CAP;
+  private supply = new SupplyChain();
+  private millDayIncome = 0;
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
+  private supplyLinkMeshes: Mesh[] = [];
   private activeEvent: GameEvent | null = null;
   private firedEvents = new Set<string>();
   private tempDeliveryMult = 1; private tempDeliveryUntil = 0;
@@ -124,6 +127,7 @@ export class World {
       (cost) => { if (this.cash < cost) { this.hud.setStatus(`Not enough cash (${fmtMoney(cost)}).`); return false; } this.cash -= cost; this.updateEconomy(); return true; },
       (m3h) => { this.plantThroughput = m3h; },
     );
+    this.plantInterior.setSupply(this.interiorSupply()); // sources start starved until the supply chain is built
 
     this.hud = new Hud(this.root, {
       onSelect: (t) => this.onSelect(t),
@@ -135,7 +139,7 @@ export class World {
       onRecipe: (solids, binder) => { const r = this.activeRecipe(); r.solids = solids; r.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); if (this.mode === "underground" && this.selectedStope) this.renderStopePanel(); },
       onBinderTopup: () => {
         if (this.cash < BINDER_TOPUP_COST) { this.hud.setStatus(`Not enough cash for a binder truck top-up (${fmtMoney(BINDER_TOPUP_COST)}).`); return; }
-        this.cash -= BINDER_TOPUP_COST; this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_TOPUP_TONNES);
+        this.cash -= BINDER_TOPUP_COST; this.supply.topUpBinder(BINDER_TOPUP_TONNES);
         this.updateEconomy(); this.hud.setStatus(`Binder truck top-up: +${BINDER_TOPUP_TONNES} t for ${fmtMoney(BINDER_TOPUP_COST)}.`);
       },
     });
@@ -164,10 +168,11 @@ export class World {
       <div class="rsHead">BACKFILL TYCOON — how it runs</div>
       <ol class="introSteps">
         <li>Build a <b>power station</b>, then the <b>backfill plant</b> on the pad.</li>
+        <li>Stand up the <b>materials chain</b>: a <b>⚙ Mill</b> refines ore (your steady income) and makes tailings, a <b>⛰ TSF</b> stores the ~half of tailings that can't go back down, a <b>🚆 Rail terminal</b> lands binder, and a <b>💧 Water pump</b> feeds the pond. No mill = no cash and no fill; a full TSF chokes the mill.</li>
         <li>Click the plant to step <b>inside</b> and wire the process line: thickener → cyclone → filter → mixer → pump.</li>
         <li>Hit <b>⛏ Go underground</b>. Stopes mine out on a schedule — <b>primaries</b> before their secondaries.</li>
-        <li>Pick a <b>fill type</b>, <b>design the reticulation</b> leg-by-leg, and set the mix in the <b>🧪 Lab</b>.</li>
-        <li><b>Pour</b> — mind the pressure, flush plugs. Then cure, crush the cylinders, and answer to the board.</li>
+        <li>Pick a <b>fill type</b>, <b>design the reticulation</b> leg-by-leg, set the mix in the <b>🧪 Lab</b>, then <b>press ▶</b> — the clock only runs when you do.</li>
+        <li><b>Pour</b> — it draws tailings + water + binder at once; whichever runs dry throttles you. Mind the pressure, flush plugs, cure, crush cylinders, answer to the board.</li>
       </ol>
       <button class="pBtn primary" id="introStart"><b>Start building ▶</b></button>
     </div>`;
@@ -249,6 +254,7 @@ export class World {
 
   private enterPlant() {
     this.disarm(); this.deselectBuilding();
+    this.plantInterior.setSupply(this.interiorSupply());
     this.mode = "plant";
     this.surfaceRoot.setEnabled(false);
     this.setSky(true);
@@ -307,12 +313,15 @@ export class World {
       // plug (seal the barricade) and cap (working surface) pours are slower/careful
       const frac = s.placedM3 / s.volumeM3;
       const subRate = frac < 0.08 ? 0.5 : frac > 0.92 ? 0.7 : 1;
-      let delta = Math.min(this.pourRatePerDay() * f * fill.rateMult * subRate * dd, s.volumeM3 - s.placedM3);
-      const need = (delta * this.recipeFor(s).binderKgPerM3 * fill.binderMult) / 1000; // tonnes
-      if (need > 0 && this.binderTonnes < need) {
-        delta *= this.binderTonnes / need; this.binderTonnes = 0;
-        if (Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(`⚠ Binder silo dry — ${s.id} pour stalled. Order a truck top-up or wait for rail.`);
-      } else this.binderTonnes -= need;
+      const want = Math.min(this.pourRatePerDay() * f * fill.rateMult * subRate * dd, s.volumeM3 - s.placedM3);
+      const binderNeed = (want * this.recipeFor(s).binderKgPerM3 * fill.binderMult) / 1000; // tonnes at full rate
+      const draw = this.supply.drawForPour(want, binderNeed); // throttles to the scarcest of tailings/water/binder
+      const delta = draw.m3;
+      if (draw.limiting && Math.floor(this.day) !== this.lastDayShown) {
+        const fix = draw.limiting === "binder" ? "order a truck top-up or build the Rail terminal"
+          : draw.limiting === "tailings" ? "the Mill can't keep the buffer fed" : "the pond is dry — check the Water pump";
+        this.hud.setStatus(`⚠ ${s.id} pour throttled — out of ${draw.limiting} (${fix}).`);
+      }
       s.placedM3 += delta;
       this.cash -= recipeCostPerM3(this.recipeFor(s)) * fill.costMult * delta;
       if (s.placedM3 >= s.volumeM3) {
@@ -326,8 +335,12 @@ export class World {
       }
     }
 
+    // surface materials economy: hoist ore, mill it (concentrate income + tailings), route to TSF, deliver binder, pump water
     const deliveryMult = this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1;
-    this.binderTonnes = Math.min(BINDER_SILO_CAP, this.binderTonnes + BINDER_DELIVERY_PER_DAY * deliveryMult * dd); // rail delivery
+    const sup = this.supply.tick(dd, this.supplyState(), deliveryMult);
+    this.cash += sup.revenue - sup.binderCost;
+    this.millDayIncome = dd > 0 ? sup.revenue / dd : 0; // $/day for the HUD readout
+    if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
@@ -382,7 +395,7 @@ export class World {
       id: "binder-delay", title: "Binder rail shipment delayed",
       body: "The rail cement shipment is held up — the silo will run down. Binder is ~70% of your cost, and every pour needs it. Silo capacity vs delivery lead time is the eternal squeeze.",
       options: [
-        { label: `Truck top-up (+${BINDER_TOPUP_TONNES} t, ${fmtMoney(BINDER_TOPUP_COST)})`, detail: "Short lead, premium price — keeps pours running.", apply: (w) => { w.cash -= BINDER_TOPUP_COST; w.binderTonnes = Math.min(BINDER_SILO_CAP, w.binderTonnes + BINDER_TOPUP_TONNES); } },
+        { label: `Truck top-up (+${BINDER_TOPUP_TONNES} t, ${fmtMoney(BINDER_TOPUP_COST)})`, detail: "Short lead, premium price — keeps pours running.", apply: (w) => { w.cash -= BINDER_TOPUP_COST; w.supply.topUpBinder(BINDER_TOPUP_TONNES); } },
         { label: "Accept reduced rail for 8 days", detail: "Delivery cut to 30% — stretch the silo, watch the level.", apply: (w) => { w.tempDeliveryMult = 0.3; w.tempDeliveryUntil = w.day + 8; } },
         { label: "Pause pours 3 days", detail: "Wait for rail — the schedule slips.", apply: (w) => { w.day += 3; } },
       ],
@@ -570,6 +583,7 @@ export class World {
     if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
     this.drawRoads();
     this.recomputePower();
+    this.refreshSupply();
     this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
   }
@@ -622,8 +636,43 @@ export class World {
     }
   }
 
-  private updateEconomy() { this.hud.setEconomy(this.cash, this.powered, this.total); this.hud.setBinder(this.binderTonnes, BINDER_SILO_CAP); }
+  private updateEconomy() {
+    this.hud.setEconomy(this.cash, this.powered, this.total);
+    this.hud.setBinder(this.supply.binder.level, this.supply.binder.cap);
+    this.hud.setResources({ ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome });
+  }
   private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher"); }
+  /** Which powered supply buildings exist, for the surface materials economy tick. */
+  private supplyState() {
+    const powered = (t: string) => this.buildings.some((b) => b.spec.type === t && this.isPowered(b));
+    const tsfCap = this.buildings.reduce((a, b) => a + (this.isPowered(b) || !b.spec.needsPower ? (b.spec.tsfCap ?? 0) : 0), 0);
+    return {
+      mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"),
+      reserves: this.underground.counts().cured < this.underground.stopes.length,
+      tsfCap,
+    };
+  }
+  /** Plant-schematic gating: a source is live only if its surface stock actually holds material. */
+  private interiorSupply() {
+    return { tailings: this.supply.tailings.level > 1, binder: this.supply.binder.level > 1, water: this.supply.water.level > 1 };
+  }
+  private refreshSupply() { this.plantInterior.setSupply(this.interiorSupply()); this.drawSupplyLinks(); }
+
+  /** Draw inbound feed lines from each supply building to the plant. */
+  private drawSupplyLinks() {
+    this.supplyLinkMeshes.forEach((m) => m.dispose()); this.supplyLinkMeshes = [];
+    const plant = this.buildings.find((b) => b.spec.type === "plant"); if (!plant) return;
+    const colFor: Record<string, string> = { tailings: "#9a8763", binder: "#e0cd94", water: "#4aa8ff" };
+    for (const b of this.buildings) {
+      if (!b.spec.supplies) continue;
+      const a = new Vector3(b.pos.x, b.pos.y + 2, b.pos.z);
+      const c = new Vector3(plant.pos.x, plant.pos.y + 2, plant.pos.z);
+      const mid = Vector3.Center(a, c); mid.y += 1.5;
+      const line = MeshBuilder.CreateLines("supply", { points: [a, mid, c] }, this.scene);
+      line.color = Color3.FromHexString(colFor[b.spec.supplies]); line.parent = this.surfaceRoot; line.isPickable = false;
+      this.supplyLinkMeshes.push(line);
+    }
+  }
   private isPowered(b: Placed) {
     if (!b.spec.needsPower) return true;
     return this.buildings.some((s) => s.spec.powerRadius && Vector3.Distance(s.pos, b.pos) <= (s.spec.powerRadius ?? 0));

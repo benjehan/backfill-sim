@@ -101,6 +101,53 @@ export const createWorkshop: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
+// ---- inbound supply: mill (tailings), rail terminal (binder), water pump ----
+export const createMill: Build = (scene, onMesh) =>
+  rootOf(scene, "mill", () => {
+    const parts: Mesh[] = [];
+    const pad = box(scene, "mpad", 20, 1, 14, "#6f7378"); pad.position.y = 0.5; parts.push(pad);
+    const hall = box(scene, "mhall", 16, 9, 11, "#8a8f96"); hall.position.set(-1, 5, 0); parts.push(hall);
+    const roof = box(scene, "mroof", 16.4, 0.8, 11.4, "#c04a3a"); roof.position.set(-1, 9.8, 0); parts.push(roof);
+    const drum = cyl(scene, "mdrum", 4, 8, "#4c5a66", 14); drum.rotation.z = Math.PI / 2; drum.position.set(8, 4, 0); parts.push(drum); // SAG mill drum
+    return parts;
+  }, onMesh);
+
+export const createRail: Build = (scene, onMesh) =>
+  rootOf(scene, "rail", () => {
+    const parts: Mesh[] = [];
+    const bed = box(scene, "rbed", 24, 0.6, 6, "#5a5148"); bed.position.y = 0.3; parts.push(bed);
+    for (const rz of [-1.4, 1.4]) { const r = box(scene, "rrail", 24, 0.3, 0.4, "#2c3138"); r.position.set(0, 0.7, rz); parts.push(r); }
+    const silo = cyl(scene, "rsilo", 4.4, 12, "#d9d2bd", 12); silo.position.set(6, 6.5, 0); parts.push(silo);
+    const car = box(scene, "rcar", 6, 3, 3, "#b0662f"); car.position.set(-7, 2, 0); parts.push(car); // rail car
+    return parts;
+  }, onMesh);
+
+export const createWaterPump: Build = (scene, onMesh) =>
+  rootOf(scene, "waterpump", () => {
+    const parts: Mesh[] = [];
+    const pond = MeshBuilder.CreateCylinder("wpond", { diameter: 11, height: 0.6, tessellation: 20 }, scene);
+    pond.material = mat(scene, "#3f7bb0"); pond.position.set(-3, 0.3, 0); parts.push(pond);
+    const house = box(scene, "whouse", 6, 4, 5, "#9aa0a6"); house.position.set(5, 2.5, 0); parts.push(house);
+    const pipe = cyl(scene, "wpipe", 1, 6, "#4c5a66", 8); pipe.rotation.z = Math.PI / 2; pipe.position.set(1, 3, 0); parts.push(pipe);
+    return parts;
+  }, onMesh);
+
+// ---- tailings storage facility: raised embankment + settling pond ----------
+export const createTSF: Build = (scene, onMesh) =>
+  rootOf(scene, "tsf", () => {
+    const parts: Mesh[] = [];
+    // stepped embankment ring (upstream-raised dam), tan
+    const outer = cyl(scene, "tsfemb1", 40, 3, "#8a7a56", 24); outer.position.y = 1.5; parts.push(outer);
+    const mid = cyl(scene, "tsfemb2", 34, 3, "#9a8a63", 24); mid.position.y = 4; parts.push(mid);
+    // beach + supernatant pond inside, greenish-grey slurry
+    const beach = cyl(scene, "tsfbeach", 30, 0.5, "#a89b74", 24); beach.position.y = 5.3; parts.push(beach);
+    const pond = MeshBuilder.CreateCylinder("tsfpond", { diameter: 16, height: 0.4, tessellation: 24 }, scene);
+    pond.material = mat(scene, "#5f7a63"); pond.position.y = 5.55; parts.push(pond);
+    // spigot delivery pipe over the crest
+    const spig = cyl(scene, "tsfspig", 1.1, 24, "#4c5a66", 8); spig.rotation.z = Math.PI / 2; spig.position.set(0, 6, 14); parts.push(spig);
+    return parts;
+  }, onMesh);
+
 // ---- crusher plant (aggregate line for CAF) --------------------------------
 export const createCrusher: Build = (scene, onMesh) =>
   rootOf(scene, "crusher", () => {

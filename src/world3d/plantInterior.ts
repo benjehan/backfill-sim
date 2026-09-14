@@ -60,6 +60,19 @@ export class PlantInterior {
 
   center() { return new Vector3(0, 0, 0); }
 
+  private supplyNote = "";
+  /** Gate the plant's raw-material sources on the surface supply chain. */
+  setSupply(s: { tailings: boolean; binder: boolean; water: boolean }) {
+    const cap = (type: string, on: boolean) => { const m = this.plant.machines.find((x) => x.type === type); if (m) m.capOverride = on ? undefined : 0; };
+    cap("src_tailings", s.tailings); cap("src_binder", s.binder); cap("src_water", s.water);
+    const missing: string[] = [];
+    if (!s.tailings) missing.push("tailings (build a Mill)");
+    if (!s.binder) missing.push("binder (Rail terminal)");
+    if (!s.water) missing.push("water (Water pump)");
+    this.supplyNote = missing.length ? `⚠ No inbound ${missing.join(", ")} on the surface.` : "";
+    this.solveSync();
+  }
+
   enter() { this.root.setEnabled(true); this.overlay.classList.remove("hidden"); this.solveSync(); }
   exit() { this.root.setEnabled(false); this.overlay.classList.add("hidden"); this.tool = null; this.pending = null; this.disposeGhost(); this.cancelMove(); this.deselect(); }
 
@@ -215,7 +228,7 @@ export class PlantInterior {
     st.textContent = this.moving ? `Moving ${CATALOG[this.plant.getMachine(this.moving)!.type].label} — click a free tile. Right-click to cancel.`
       : this.pending ? "Connecting — click a matching input port."
       : this.tool ? `Placing ${CATALOG[this.tool].label} — click the floor. Right-click to cancel.`
-      : "Place equipment, click it to select/move/remove, or wire output→input ports.";
+      : this.supplyNote || "Place equipment, click it to select/move/remove, or wire output→input ports.";
     this.overlay.querySelectorAll<HTMLElement>("[data-pact^='tool:']").forEach((b) => b.classList.toggle("on", b.dataset.pact === "tool:" + this.tool));
   }
 

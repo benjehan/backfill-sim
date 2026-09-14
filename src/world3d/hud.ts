@@ -68,7 +68,9 @@ export class Hud {
         <div class="whStat binderStat"><span>Binder</span><b id="whBinderV">0 t</b>
           <div class="binderTrack"><div id="binderBar" class="binderFill"></div></div>
           <button class="whTopup" id="whTopup" title="emergency truck top-up">🚚</button></div>
+        <div class="whStat"><span>Mill income</span><b id="whIncome">$0/day</b></div>
       </div>
+      <div class="whRes" id="whRes"></div>
       <button class="whMode" id="whMode">⛏ Go underground</button>
       <div class="whStatus" id="whStatus">Lay out the surface. Start with a power station.</div>
       <div class="whPalette" id="whPalette"></div>
@@ -174,6 +176,31 @@ export class Hud {
     const f = Math.max(0, Math.min(100, (tonnes / cap) * 100));
     this.binderBar.style.width = `${f}%`;
     this.binderBar.className = `binderFill ${f < 12 ? "red" : f < 30 ? "amber" : "green"}`;
+  }
+
+  private resEl?: HTMLElement;
+  private incomeEl?: HTMLElement;
+  setResources(r: {
+    ore: { level: number; cap: number }; tailings: { level: number; cap: number };
+    water: { level: number; cap: number }; tsf: { level: number; cap: number }; income: number;
+  }) {
+    this.incomeEl ??= this.rootEl.querySelector("#whIncome") as HTMLElement;
+    if (this.incomeEl) { this.incomeEl.textContent = `${fmtMoney(r.income)}/day`; this.incomeEl.classList.toggle("bad", r.income <= 0); }
+    this.resEl ??= this.rootEl.querySelector("#whRes") as HTMLElement;
+    if (!this.resEl) return;
+    const bar = (label: string, unit: string, s: { level: number; cap: number }, hi = false) => {
+      const pct = s.cap > 0 ? Math.max(0, Math.min(100, (s.level / s.cap) * 100)) : 0;
+      // for the TSF, a HIGH bar is bad (it fills up); for feed stocks, a LOW bar is bad
+      const tone = hi ? (pct > 88 ? "red" : pct > 70 ? "amber" : "green")
+        : (s.cap === 0 ? "red" : pct < 12 ? "red" : pct < 30 ? "amber" : "green");
+      const val = s.cap > 0 ? `${Math.round(s.level).toLocaleString()} ${unit}` : "— none —";
+      return `<div class="resRow"><span class="resL">${label}</span><div class="resTrack"><div class="resFill ${tone}" style="width:${pct}%"></div></div><b class="resV">${val}</b></div>`;
+    };
+    this.resEl.innerHTML =
+      bar("Ore (ROM)", "t", r.ore) +
+      bar("Tailings buf", "t", r.tailings) +
+      bar("Water pond", "m³", r.water) +
+      bar("TSF", "t", r.tsf, true);
   }
 
   setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }

@@ -71,6 +71,7 @@ export interface Machine {
   rate: number;
   state: MachineState;
   anim: number; // animation phase
+  capOverride?: number; // set by the surface supply chain (0 = starved)
 }
 
 export interface Pipe {
@@ -248,13 +249,14 @@ export class Plant {
     if (seen.has(m.id)) return 0; // guard against cycles
     seen.add(m.id);
     const s = this.spec(m);
+    const cap = m.capOverride ?? s.cap;
     if (s.kind === "source") {
-      const out = Math.min(s.cap, demand);
-      m.rate = out; m.state = out > 0.01 ? "running" : "idle";
+      const out = Math.min(cap, demand);
+      m.rate = out; m.state = out > 0.01 ? "running" : cap <= 0 ? "starved" : "idle";
       seen.delete(m.id);
       return out;
     }
-    const want = Math.min(s.cap, demand);
+    const want = Math.min(cap, demand);
     let producible = want;
     let anyMissing = false;
     s.inputs.forEach((_mat, i) => {
