@@ -35,13 +35,13 @@ import {
   BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
-import { SupplyChain } from "./supplyChain.js";
+import { SupplyChain, tsfCapacity, tsfRaiseCost, TSF_MAX_RAISES } from "./supplyChain.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
 const SPEEDS = [1, 2, 4, 8];
 
-interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; }
+interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
 interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
 
@@ -578,7 +578,7 @@ export class World {
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     this.cash -= spec.cost;
     this.opexPerDay += spec.opexPerDay;
-    this.buildings.push({ spec, root, pos: at, marker: null });
+    this.buildings.push({ spec, root, pos: at, marker: null, raises: 0 });
     if (spec.spawnsWorkers) this.crew.add(spec.spawnsWorkers);
     if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
     this.drawRoads();
@@ -645,7 +645,7 @@ export class World {
   /** Which powered supply buildings exist, for the surface materials economy tick. */
   private supplyState() {
     const powered = (t: string) => this.buildings.some((b) => b.spec.type === t && this.isPowered(b));
-    const tsfCap = this.buildings.reduce((a, b) => a + (this.isPowered(b) || !b.spec.needsPower ? (b.spec.tsfCap ?? 0) : 0), 0);
+    const tsfCap = this.buildings.reduce((a, b) => a + (b.spec.tsfCap ? tsfCapacity(b.spec.tsfCap, b.raises) : 0), 0);
     return {
       mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"),
       reserves: this.underground.counts().cured < this.underground.stopes.length,
@@ -700,11 +700,41 @@ export class World {
     if (s.spawnsTrucks) roles.push(`Runs ${s.spawnsTrucks} haul trucks`);
     if (s.type === "crusher") roles.push("Enables CAF (crushed aggregate) fills");
     if (s.type === "plant") roles.push("The backfill plant — step inside to build the process line");
+    if (s.type === "mill") roles.push("Refines hoisted ore into concentrate (income) and makes tailings");
+    let extra = "";
+    if (s.tsfCap) {
+      const cap = tsfCapacity(s.tsfCap, b.raises);
+      const fillPct = this.supply.tsf.cap > 0 ? Math.round((this.supply.tsf.level / this.supply.tsf.cap) * 100) : 0;
+      const lift = Math.round(s.tsfCap * 0.5);
+      const cost = tsfRaiseCost(b.raises);
+      roles.push(`Stores the ~half of tailings that can't go back underground`);
+      extra = `<div class="pSplit"><span>This dam holds</span><b>${cap.toLocaleString()} t · ${b.raises}/${TSF_MAX_RAISES} lifts</b></div>
+        <div class="pSplit"><span>TSF fill (site)</span><b class="${fillPct > 85 ? "bad" : ""}">${fillPct}%</b></div>
+        ${b.raises < TSF_MAX_RAISES
+          ? `<button class="pBtn primary" data-act="raisedam"><b>Raise the dam ▲</b><span>+${lift.toLocaleString()} t capacity · ${fmtMoney(cost)}</span></button>`
+          : `<div class="pNote">Max practical dam height reached — build another TSF for more storage.</div>`}`;
+    }
     return `<div class="pHead">${s.icon} ${s.label} <span class="pClose" data-act="closebuilding">✕</span></div>
       <div class="pMeta">${roles.join("<br>")}</div>
       <div class="pSplit"><span>Upkeep</span><b>${fmtMoney(s.opexPerDay)}/day</b></div>
       <div class="pSplit"><span>Build cost</span><b>${fmtMoney(s.cost)}</b></div>
+      ${extra}
       ${s.type === "plant" ? `<button class="pBtn primary" data-act="enterplant"><b>Step inside ▶</b></button>` : ""}`;
+  }
+
+  /** Pay to raise the selected TSF's embankment — adds storage, and the dam visibly grows taller. */
+  private raiseDam() {
+    const b = this.selectedBuilding;
+    if (!b || !b.spec.tsfCap || b.raises >= TSF_MAX_RAISES) return;
+    const cost = tsfRaiseCost(b.raises);
+    if (this.cash < cost) { this.hud.setStatus(`Not enough cash to raise the dam (${fmtMoney(cost)}).`); return; }
+    this.cash -= cost;
+    b.raises++;
+    b.root.scaling.y = 1 + b.raises * 0.22; // upstream lift — the dam grows upward
+    this.refreshSupply();
+    this.updateEconomy();
+    this.hud.setPanel(this.buildingPanel(b));
+    this.hud.setStatus(`Dam raised to lift ${b.raises} for ${fmtMoney(cost)} — +${Math.round(b.spec.tsfCap * 0.5).toLocaleString()} t of tailings storage.`);
   }
 
   private updateMarker(b: Placed, showRed: boolean) {
@@ -861,6 +891,7 @@ export class World {
     if (act.startsWith("ev:")) { this.resolveEvent(+act.slice(3)); return; }
     if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
     if (act === "closebuilding") { this.deselectBuilding(); return; }
+    if (act === "raisedam") { this.raiseDam(); return; }
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;

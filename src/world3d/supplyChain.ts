@@ -22,6 +22,12 @@ export const TAILINGS_BUFFER_CAP = 9_000;  // thickened-tailings surge buffer fe
 export const WATER_POND_CAP = 60_000;      // process-water pond (m³)
 export const WATER_PUMP_M3_PER_DAY = 9_000;// pumped raw-water make-up per day
 export const TSF_CAP_PER_CELL = 260_000;   // storage added by each TSF (t); raise the dam for more
+export const TSF_RAISE_FRACTION = 0.5;     // each dam lift adds 50% of the base cell capacity
+export const TSF_MAX_RAISES = 4;           // upstream raises get impractical beyond a few lifts
+/** Effective storage of one TSF after `raises` lifts. */
+export const tsfCapacity = (baseCap: number, raises: number) => Math.round(baseCap * (1 + raises * TSF_RAISE_FRACTION));
+/** Capex of the next lift — upstream raises get progressively dearer. */
+export const tsfRaiseCost = (raises: number) => Math.round(4_000_000 * (1 + raises * 0.6));
 
 // Binder now genuinely arrives and costs money (course: binder ≈ 70% of backfill opex).
 export const BINDER_COST_PER_T = 190;      // delivered rail binder cost ($/t)
