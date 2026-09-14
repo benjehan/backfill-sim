@@ -85,6 +85,7 @@ export class World {
   private supplyLinkMeshes: Mesh[] = [];
   private flowLinks: { src: Placed; a: Vector3; c: Vector3; beads: Mesh[]; lift: number }[] = [];
   private flowPhase = 0;
+  private oreHoistAt = new Vector3(-67, 7, -10); // headframe discharge — ore conveyed to the mill
   private activeEvent: GameEvent | null = null;
   private firedEvents = new Set<string>();
   private tempDeliveryMult = 1; private tempDeliveryUntil = 0;
@@ -147,6 +148,7 @@ export class World {
       },
     });
     this.updateEconomy();
+    this.refreshObjective();
     this.underground.updateSchedule(this.day);
     this.refreshClock();
     this.refreshSchedule();
@@ -234,6 +236,7 @@ export class World {
     // headframe over the hoisting shaft beside the portal — the ore-hoist that feeds the mill
     const hf = createHeadframe(this.scene, (m) => this.shadow.addShadowCaster(m));
     hf.position.set(x - 3, heightAt(x - 3, z - 20), z - 20); hf.parent = this.surfaceRoot;
+    this.oreHoistAt = new Vector3(x - 3, heightAt(x - 3, z - 20) + 7, z - 20); // conveyor picks up hoisted ore here
     return new Vector3(x + 7, y, z);
   }
 
@@ -244,6 +247,7 @@ export class World {
   }
 
   private descend() {
+    this.hud.setObjective(null);
     this.disarm(); this.deselectBuilding();
     this.mode = "underground";
     this.surfaceRoot.setEnabled(false);
@@ -264,6 +268,7 @@ export class World {
     this.setSky(false);
     this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
     this.hud.setMode("surface");
+    this.refreshObjective();
   }
 
   private enterPlant() {
@@ -285,6 +290,7 @@ export class World {
     this.setSky(false);
     this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
     this.hud.setHidden(false);
+    this.refreshObjective();
   }
 
   /** Pour throughput is set by the plant you build inside: no line = slow contract plant. */
@@ -611,6 +617,7 @@ export class World {
     this.drawRoads();
     this.recomputePower();
     this.refreshSupply();
+    this.refreshObjective();
     this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
   }
@@ -721,6 +728,23 @@ export class World {
   }
   private refreshSupply() { this.plantInterior.setSupply(this.interiorSupply()); this.drawSupplyLinks(); }
 
+  /** The next thing the player needs to build to stand up the operation, or null when set. */
+  private nextObjective(): string | null {
+    const has = (t: string) => this.buildings.some((b) => b.spec.type === t);
+    const T = 6;
+    const step = (n: number, body: string) => `<span class="objStep">Setup ${n}/${T}</span>${body}`;
+    if (!has("power")) return step(1, "Build a <b>⚡ Power station</b> — everything on site runs on power.");
+    if (!has("plant")) return step(2, "Build the <b>🏭 Backfill plant</b> on the graded pad.");
+    if (!has("mill")) return step(3, "Build a <b>⚙ Mill</b> out on the terrain — it refines ore into cash and makes the tailings you backfill with.");
+    if (!has("tsf")) return step(4, "Build a <b>⛰ Tailings dam</b> — only ~half the tailings can go underground; the rest must go to the TSF or the mill chokes.");
+    if (!has("rail")) return step(5, "Build a <b>🚆 Rail terminal</b> — binder is delivered here by rail.");
+    if (!has("waterpump")) return step(6, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
+    const unpowered = this.buildings.filter((b) => b.spec.needsPower && !this.isPowered(b));
+    if (unpowered.length) return `<span class="objStep">Power reach</span>${unpowered.length} work(s) out of power range — build a <b>🔌 Substation</b> to relay power out to them.`;
+    return `<span class="objStep">Ready</span>You're set. Press <b>▶</b> to run time, then <b>⛏ go underground</b> to reticulate and pour.`;
+  }
+  private refreshObjective() { this.hud.setObjective(this.mode === "surface" ? this.nextObjective() : null); }
+
   private linkMat(hex: string, emit = 0.12): StandardMaterial {
     const m = new StandardMaterial("lk" + hex, this.scene);
     m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black();
@@ -789,8 +813,10 @@ export class World {
       const kind = b.spec.type === "mill" ? "conveyor" : "pipe";
       this.makeLink(b, at(b, 6), at(plant, 6), colFor[mat], kind, diaFor[mat]);
     }
-    // mill → nearest TSF: slurry line for the tailings that can't be reused
     const mill = this.buildings.find((b) => b.spec.type === "mill");
+    // headframe → mill: ore conveyor bringing hoisted ROM ore to be refined
+    if (mill) this.makeLink(mill, this.oreHoistAt.clone(), at(mill, 6), "#8a7d68", "conveyor", 2.0);
+    // mill → nearest TSF: slurry line for the tailings that can't be reused
     const tsfs = this.buildings.filter((b) => b.spec.tsfCap);
     if (mill && tsfs.length) {
       let best = tsfs[0], bd = Infinity;

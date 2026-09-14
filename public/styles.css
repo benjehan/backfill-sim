@@ -492,6 +492,14 @@ select, input[type=number] {
 .resFill { height: 100%; background: var(--green); transition: width .25s; }
 .resFill.amber { background: var(--amber); } .resFill.red { background: var(--red); }
 .resV { flex: 0 0 auto; font-size: 10px; color: var(--fg); min-width: 46px; text-align: right; }
+
+/* build-objective banner — guides the player through standing up the operation */
+.whObjective { position: absolute; left: 50%; bottom: 168px; transform: translateX(-50%);
+  background: rgba(18,30,22,.86); border: 1px solid #2f6b45; border-left: 4px solid #39d98a; border-radius: 8px;
+  padding: 8px 16px; max-width: 560px; text-align: center; backdrop-filter: blur(3px); pointer-events: none;
+  font-size: 13px; color: #dff3e6; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+.whObjective b { color: #7be0a6; }
+.whObjective .objStep { font-size: 10px; color: #8fb89e; text-transform: uppercase; letter-spacing: .6px; display: block; margin-bottom: 2px; }
 .whTopup { position: absolute; right: 6px; top: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; font-size: 13px; cursor: pointer; pointer-events: auto; }
 .whTopup:hover { border-color: var(--accent); }
 

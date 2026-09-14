@@ -72,6 +72,7 @@ export class Hud {
       </div>
       <div class="whRes" id="whRes"></div>
       <button class="whMode" id="whMode">⛏ Go underground</button>
+      <div class="whObjective hidden" id="whObjective"></div>
       <div class="whStatus" id="whStatus">Lay out the surface. Start with a power station.</div>
       <div class="whPalette" id="whPalette"></div>
       <div class="whPanel hidden" id="whPanel"></div>
@@ -201,6 +202,15 @@ export class Hud {
       bar("Tailings buf", "t", r.tailings) +
       bar("Water pond", "m³", r.water) +
       bar("TSF", "t", r.tsf, true);
+  }
+
+  private objectiveEl?: HTMLElement;
+  /** Show the current build objective, or pass null when the operation is fully stood up. */
+  setObjective(text: string | null) {
+    this.objectiveEl ??= this.rootEl.querySelector("#whObjective") as HTMLElement;
+    if (!this.objectiveEl) return;
+    if (text) { this.objectiveEl.innerHTML = text; this.objectiveEl.classList.remove("hidden"); }
+    else this.objectiveEl.classList.add("hidden");
   }
 
   setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }
