@@ -163,19 +163,31 @@ export const createHeadframe: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
-// ---- tailings storage facility: raised embankment + settling pond ----------
+// ---- tailings storage facility: ring embankment, beach, decant pond ---------
+// The "tsffill" disc is driven at runtime to rise as the TSF fills; the whole
+// root is scaled in Y as the dam is raised in lifts.
 export const createTSF: Build = (scene, onMesh) =>
   rootOf(scene, "tsf", () => {
     const parts: Mesh[] = [];
-    // stepped embankment ring (upstream-raised dam), tan
-    const outer = cyl(scene, "tsfemb1", 40, 3, "#8a7a56", 24); outer.position.y = 1.5; parts.push(outer);
-    const mid = cyl(scene, "tsfemb2", 34, 3, "#9a8a63", 24); mid.position.y = 4; parts.push(mid);
-    // beach + supernatant pond inside, greenish-grey slurry
-    const beach = cyl(scene, "tsfbeach", 30, 0.5, "#a89b74", 24); beach.position.y = 5.3; parts.push(beach);
-    const pond = MeshBuilder.CreateCylinder("tsfpond", { diameter: 16, height: 0.4, tessellation: 24 }, scene);
-    pond.material = mat(scene, "#5f7a63"); pond.position.y = 5.55; parts.push(pond);
-    // spigot delivery pipe over the crest
-    const spig = cyl(scene, "tsfspig", 1.1, 24, "#4c5a66", 8); spig.rotation.z = Math.PI / 2; spig.position.set(0, 6, 14); parts.push(spig);
+    // ring embankment (upstream-raised dam wall) — a flattened torus reads as a bund
+    const emb = MeshBuilder.CreateTorus("tsfemb", { diameter: 34, thickness: 9, tessellation: 22 }, scene);
+    emb.material = mat(scene, "#8a7a56"); emb.scaling.y = 0.7; emb.position.y = 3; parts.push(emb);
+    const crest = MeshBuilder.CreateTorus("tsfcrest", { diameter: 34, thickness: 4, tessellation: 22 }, scene);
+    crest.material = mat(scene, "#9a8a63"); crest.scaling.y = 0.5; crest.position.y = 5; parts.push(crest);
+    // beach floor inside the bund (dry deposited tailings)
+    const floor = cyl(scene, "tsffloor", 32, 0.6, "#b0a37a", 24); floor.position.y = 1.6; parts.push(floor);
+    // the wet tailings/supernatant surface — RAISED at runtime by fill level (named for lookup)
+    const fill = cyl(scene, "tsffill", 30, 0.5, "#6f8466", 24); fill.position.y = 1.9; parts.push(fill);
+    // decant pond (clarified water) offset to the low end
+    const pond = cyl(scene, "tsfpond", 9, 0.35, "#4f6f8a", 20); pond.position.set(8, 2.05, -6); parts.push(pond);
+    // spigot delivery ring: header pipe over the crest + drop bars discharging inward
+    const header = MeshBuilder.CreateTorus("tsfheader", { diameter: 33, thickness: 0.8, tessellation: 20 }, scene);
+    header.material = mat(scene, "#4c5a66"); header.position.y = 5.4; parts.push(header);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      const drop = cyl(scene, "tsfspig", 0.7, 3, "#3a444d", 6);
+      drop.position.set(Math.cos(a) * 14, 4.3, Math.sin(a) * 14); parts.push(drop);
+    }
     return parts;
   }, onMesh);
 

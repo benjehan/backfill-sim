@@ -651,6 +651,16 @@ export class World {
     this.hud.setEconomy(this.cash, this.powered, this.total);
     this.hud.setBinder(this.supply.binder.level, this.supply.binder.cap);
     this.hud.setResources({ ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome });
+    this.updateTsfVisuals();
+  }
+  /** Raise each TSF's tailings surface to match the site fill fraction. */
+  private updateTsfVisuals() {
+    const f = this.supply.tsf.cap > 0 ? Math.max(0, Math.min(1, this.supply.tsf.level / this.supply.tsf.cap)) : 0;
+    for (const b of this.buildings) {
+      if (!b.spec.tsfCap) continue;
+      const fill = b.root.getChildMeshes().find((m) => m.name.includes("tsffill"));
+      if (fill) { fill.position.y = 1.9 + f * 2.9; fill.setEnabled(f > 0.02); }
+    }
   }
   private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher"); }
   /** Which powered supply buildings exist, for the surface materials economy tick. */
