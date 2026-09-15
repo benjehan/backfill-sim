@@ -499,6 +499,17 @@ select, input[type=number] {
   padding: 8px 16px; max-width: 560px; text-align: center; backdrop-filter: blur(3px); pointer-events: none;
   font-size: 13px; color: #dff3e6; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
 .whObjective b { color: #7be0a6; }
+
+/* research lab panel */
+.techRp { float: right; color: #7be0a6; font-size: 13px; }
+.techList { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.techRow { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.techRow.owned { opacity: .6; }
+.techMain { flex: 1; text-align: left; }
+.techMain b { display: block; font-size: 13px; }
+.techMain span { font-size: 11px; color: var(--muted); }
+.techRow .pBtn { flex: 0 0 auto; padding: 6px 12px; }
+.techOwned { color: #7be0a6; font-size: 12px; }
 .whObjective .objStep { font-size: 10px; color: #8fb89e; text-transform: uppercase; letter-spacing: .6px; display: block; margin-bottom: 2px; }
 .whTopup { position: absolute; right: 6px; top: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; font-size: 13px; cursor: pointer; pointer-events: auto; }
 .whTopup:hover { border-color: var(--accent); }

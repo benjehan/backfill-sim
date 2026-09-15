@@ -36,10 +36,19 @@ import {
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
 import { SoundKit } from "./sound.js";
-import { SupplyChain, tsfCapacity, tsfRaiseCost, TSF_MAX_RAISES, ORE_RESERVE_START } from "./supplyChain.js";
+import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES, ORE_RESERVE_START } from "./supplyChain.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
+// Research tree — permanent campaign perks bought with RP earned from milling + cured stopes.
+const TECHS: { id: string; name: string; desc: string; cost: number }[] = [
+  { id: "recovery", name: "High-recovery flotation", desc: "+15% mill income", cost: 12 },
+  { id: "binder", name: "Bulk binder contract", desc: "−30% binder cost", cost: 10 },
+  { id: "rheology", name: "Paste rheology R&D", desc: "−15% pour friction — safer lines", cost: 14 },
+  { id: "rapidset", name: "Rapid-set binder", desc: "−25% cure time", cost: 16 },
+  { id: "dameng", name: "Deep-lift dam engineering", desc: "+50% capacity per dam raise", cost: 12 },
+  { id: "reserves", name: "Reserve-definition drilling", desc: "+50,000 t orebody", cost: 14 },
+];
 const SPEEDS = [1, 2, 4, 8];
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; }
@@ -80,6 +89,8 @@ export class World {
   private safetyIncidents = 0;
   private lastGrade = "";
   private sound = new SoundKit();
+  private rp = 0;                        // research points — the operation's accumulated know-how
+  private research = new Set<string>();  // unlocked tech ids
   private soundOn = true;
   private ambientStarted = false;
   private supply = new SupplyChain();
@@ -153,6 +164,7 @@ export class World {
       },
       onToggleSound: () => { this.soundOn = !this.soundOn; this.sound.setMuted(!this.soundOn); this.sound.toggleAmbient(this.soundOn); this.hud.setSoundIcon(this.soundOn); },
       onHelp: () => this.showEconomyHelp(),
+      onResearch: () => this.showResearch(),
     });
     this.updateEconomy();
     this.refreshObjective();
@@ -172,6 +184,37 @@ export class World {
     (window as any).__world = this;
     if (typeof location !== "undefined" && location.hash === "#autorun") setTimeout(() => this.debugAutoRun(), 400);
     if (typeof location !== "undefined" && location.hash === "#smartrun") setTimeout(() => this.debugSmartRun(), 400);
+  }
+
+  /** Research lab: spend RP on permanent campaign perks. */
+  private showResearch() {
+    this.root.querySelector(".researchCard")?.remove();
+    const el = document.createElement("div");
+    el.className = "whResult researchCard";
+    const rows = TECHS.map((t) => {
+      const owned = this.research.has(t.id);
+      const afford = this.rp >= t.cost;
+      const btn = owned ? `<span class="techOwned">✓ researched</span>`
+        : `<button class="pBtn ${afford ? "primary" : ""}" data-act="tech:${t.id}" ${afford ? "" : "disabled"}>${t.cost} RP</button>`;
+      return `<div class="techRow ${owned ? "owned" : ""}"><div class="techMain"><b>${t.name}</b><span>${t.desc}</span></div>${btn}</div>`;
+    }).join("");
+    el.innerHTML = `<div class="introCard">
+      <div class="rsHead">🔬 Research lab <span class="techRp">${Math.floor(this.rp)} RP</span></div>
+      <div class="pNote">Know-how accrues as you mill ore and hand back cured stopes. Spend it on permanent upgrades for this operation.</div>
+      <div class="techList">${rows}</div>
+      <button class="pBtn primary" id="techClose"><b>Close ▶</b></button>
+    </div>`;
+    this.root.appendChild(el);
+    el.querySelector("#techClose")!.addEventListener("click", () => el.remove());
+    el.querySelectorAll<HTMLElement>("[data-act^='tech:']").forEach((b) => b.addEventListener("click", () => { this.buyTech(b.dataset.act!.slice(5)); this.showResearch(); }));
+  }
+  private buyTech(id: string) {
+    const t = TECHS.find((x) => x.id === id); if (!t || this.research.has(id) || this.rp < t.cost) return;
+    this.rp -= t.cost; this.research.add(id); this.sound.pass();
+    if (id === "rapidset") this.underground.cureFactor = 0.75;
+    if (id === "reserves") { this.supply.oreReserve.level += 50_000; this.supply.oreReserve.cap += 50_000; }
+    this.refreshSupply(); this.updateEconomy(); // dam-eng recomputes TSF cap
+    this.hud.setStatus(`Researched: ${t.name}.`);
   }
 
   /** A dismissible card explaining how the money loop works. */
@@ -349,7 +392,8 @@ export class World {
         else s.plugDrift = Math.max(0, s.plugDrift - 0.22 * dd);
         s.plugDrift = Math.min(1, s.plugDrift);
         const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
-        s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipeFor(s).solids));
+        const fScale = frictionScale(this.recipeFor(s).solids) * (this.research.has("rheology") ? 0.85 : 1);
+        s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, fScale);
         if (s.pressureMpa > s.cls.ratingMpa) {
           this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
           this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY; this.sound.burst();
@@ -390,8 +434,11 @@ export class World {
     // surface materials economy: hoist ore, mill it (concentrate income + tailings), route to TSF, deliver binder, pump water
     const deliveryMult = this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1;
     const sup = this.supply.tick(dd, this.supplyState(), deliveryMult);
-    this.cash += sup.revenue - sup.binderCost;
-    this.millDayIncome = dd > 0 ? sup.revenue / dd : 0; // $/day for the HUD readout
+    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1);
+    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1);
+    this.cash += revenue - binderCost;
+    this.rp += sup.milledT / 4000; // know-how accrues as ore is processed
+    this.millDayIncome = dd > 0 ? revenue / dd : 0; // $/day for the HUD readout
     if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
@@ -410,6 +457,7 @@ export class World {
       const achieved = ucs28Kpa(this.recipeFor(s)) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
       s.ucsAchievedKpa = Math.round(achieved);
       s.ucsPass = achieved >= s.targetUcsKpa;
+      this.rp += 3; // a handed-back stope teaches the crew
       s.ucsPass ? this.sound.pass() : this.sound.fail();
       this.hud.setStatus(`${s.id} 28-day cylinder ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa — ${s.ucsPass ? "PASS ✓" : "FAIL ✗ (geotech won't sign the hand-back)"}.`);
     }
@@ -769,10 +817,15 @@ export class World {
     }
     return best;
   }
+  /** Effective TSF capacity of a dam, including dam-engineering research. */
+  private tsfCapOf(b: Placed) {
+    if (!b.spec.tsfCap) return 0;
+    return Math.round(b.spec.tsfCap * (1 + b.raises * 0.5 * (this.research.has("dameng") ? 1.5 : 1)));
+  }
   /** Which powered supply buildings exist (and their upgrade multipliers), for the economy tick. */
   private supplyState() {
     const powered = (t: string) => this.buildings.some((b) => b.spec.type === t && this.isPowered(b));
-    const tsfCap = this.buildings.reduce((a, b) => a + (b.spec.tsfCap ? tsfCapacity(b.spec.tsfCap, b.raises) : 0), 0);
+    const tsfCap = this.buildings.reduce((a, b) => a + this.tsfCapOf(b), 0);
     return {
       mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"), tsfCap,
       millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
@@ -940,7 +993,7 @@ export class World {
       }
     }
     if (s.tsfCap) {
-      const cap = tsfCapacity(s.tsfCap, b.raises);
+      const cap = this.tsfCapOf(b);
       const fillPct = this.supply.tsf.cap > 0 ? Math.round((this.supply.tsf.level / this.supply.tsf.cap) * 100) : 0;
       const lift = Math.round(s.tsfCap * 0.5);
       const cost = tsfRaiseCost(b.raises);
@@ -1296,7 +1349,7 @@ export class World {
       }
       const c = this.underground.counts();
       const mined = Math.round((1 - this.supply.oreReserve.level / ORE_RESERVE_START) * 100);
-      L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}% GRADE=${this.lastGrade}`);
+      L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}% rp=${Math.floor(this.rp)} GRADE=${this.lastGrade}`);
       L("DONE");
     } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }
   }

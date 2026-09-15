@@ -171,7 +171,8 @@ export class Underground {
     if (stope) stope.mesh.renderOutline = true;
   }
 
-  cureDaysFor(s: StopeUG) { return CURE_DAYS * FILL_TYPES[s.fillType].cureMult; }
+  cureFactor = 1; // research (rapid-set binder) shortens cures
+  cureDaysFor(s: StopeUG) { return CURE_DAYS * FILL_TYPES[s.fillType].cureMult * this.cureFactor; }
   primaryCured(levelIdx: number) { return this.stopes.some((x) => x.levelIdx === levelIdx && x.isPrimary && x.status === "cured"); }
 
   cureProgress(stope: StopeUG, day: number): number {
