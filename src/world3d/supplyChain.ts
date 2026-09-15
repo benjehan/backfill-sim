@@ -45,6 +45,9 @@ export interface SupplyBuildings {
   rail: boolean;   // a powered rail terminal is present
   water: boolean;  // a powered water pump is present
   tsfCap: number;  // total TSF storage capacity available (0 = no TSF)
+  millMult: number;   // mill/hoist throughput multiplier from upgrades (1 = base)
+  waterMult: number;  // water pump rate multiplier
+  binderMult: number; // rail binder delivery multiplier
 }
 
 export interface DayResult {
@@ -70,8 +73,8 @@ export class SupplyChain {
     const notes: string[] = [];
     this.tsf.cap = b.tsfCap;
 
-    // Hoist ore to the ROM pad, drawing down the finite orebody.
-    const hoist = Math.min(MINE_HOIST_TPD * dd, this.oreReserve.level, this.ore.cap - this.ore.level);
+    // Hoist ore to the ROM pad, drawing down the finite orebody (mill upgrades lift the hoist too).
+    const hoist = Math.min(MINE_HOIST_TPD * b.millMult * dd, this.oreReserve.level, this.ore.cap - this.ore.level);
     this.ore.level += hoist; this.oreReserve.level = Math.max(0, this.oreReserve.level - hoist);
     if (this.oreReserve.level <= 0 && this.ore.level < 1) notes.push("Orebody exhausted — no ore left to hoist or mill. Wind the operation down.");
     else if (this.oreReserve.level > 0 && this.oreReserve.level < ORE_RESERVE_START * 0.15) notes.push("Orebody running low — the mine is near end of life.");
@@ -79,7 +82,7 @@ export class SupplyChain {
     // Mill ore → concentrate + tailings, but only as fast as the tailings have somewhere to go.
     let milled = 0, revenue = 0, toTsf = 0;
     if (b.mill) {
-      let want = Math.min(MILL_ORE_TPD * dd, this.ore.level);
+      let want = Math.min(MILL_ORE_TPD * b.millMult * dd, this.ore.level);
       let tail = want * TAILINGS_YIELD;
       const bufFree = this.tailings.cap - this.tailings.level;
       const tsfFree = this.tsf.cap - this.tsf.level;
@@ -109,13 +112,13 @@ export class SupplyChain {
     let binderCost = 0;
     if (b.rail) {
       const room = this.binder.cap - this.binder.level;
-      const delivered = Math.min(BINDER_DELIVERY_PER_DAY_ * binderDeliveryMult * dd, room);
+      const delivered = Math.min(BINDER_DELIVERY_PER_DAY_ * b.binderMult * binderDeliveryMult * dd, room);
       this.binder.level += delivered;
       binderCost = delivered * BINDER_COST_PER_T;
     }
 
     // Water pumped to the pond; no pump ⇒ the pond only drains.
-    if (b.water) this.water.level = Math.min(this.water.cap, this.water.level + WATER_PUMP_M3_PER_DAY * dd);
+    if (b.water) this.water.level = Math.min(this.water.cap, this.water.level + WATER_PUMP_M3_PER_DAY * b.waterMult * dd);
 
     return { milledT: milled, revenue, binderCost, toTsf, notes };
   }

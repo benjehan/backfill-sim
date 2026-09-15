@@ -42,7 +42,7 @@ const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
 const SPEEDS = [1, 2, 4, 8];
 
-interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; }
+interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
 interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
 
@@ -652,7 +652,7 @@ export class World {
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     this.cash -= spec.cost;
     this.opexPerDay += spec.opexPerDay;
-    this.buildings.push({ spec, root, pos: at, marker: null, raises: 0 });
+    this.buildings.push({ spec, root, pos: at, marker: null, raises: 0, tier: 0 });
     if (spec.spawnsWorkers) this.crew.add(spec.spawnsWorkers);
     if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
     this.drawRoads();
@@ -700,7 +700,7 @@ export class World {
       let added = false;
       for (const r of relays) {
         if (energized.includes(r)) continue;
-        if (energized.some((s) => Vector3.Distance(s.pos, r.pos) <= (s.spec.powerRadius ?? 0))) { energized.push(r); added = true; }
+        if (energized.some((s) => Vector3.Distance(s.pos, r.pos) <= this.radiusOf(s))) { energized.push(r); added = true; }
       }
       if (!added) break;
     }
@@ -727,7 +727,7 @@ export class World {
     for (const b of this.buildings) {
       if (!b.spec.needsPower) continue;
       let best: Placed | null = null, bd = Infinity;
-      for (const s of sources) { const d = Vector3.Distance(s.pos, b.pos); if (d <= (s.spec.powerRadius ?? 0) && d < bd) { bd = d; best = s; } }
+      for (const s of sources) { const d = Vector3.Distance(s.pos, b.pos); if (d <= this.radiusOf(s) && d < bd) { bd = d; best = s; } }
       if (!best) continue;
       const a = new Vector3(best.pos.x, best.pos.y + best.spec.markerY, best.pos.z);
       const c = new Vector3(b.pos.x, b.pos.y + b.spec.markerY, b.pos.z);
@@ -754,13 +754,28 @@ export class World {
     }
   }
   private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher"); }
-  /** Which powered supply buildings exist, for the surface materials economy tick. */
+  /** Effective power radius including upgrades. */
+  private radiusOf(b: Placed) {
+    const r = b.spec.powerRadius ?? 0;
+    const step = b.spec.upgrade?.stat === "power" ? b.spec.upgrade.step : 0;
+    return r * (1 + b.tier * step);
+  }
+  /** Best upgrade multiplier among the powered buildings of a type (1 = base / none). */
+  private tierMult(type: string) {
+    let best = 1;
+    for (const b of this.buildings) {
+      if (b.spec.type !== type || !this.isPowered(b) || !b.spec.upgrade) continue;
+      best = Math.max(best, 1 + b.tier * b.spec.upgrade.step);
+    }
+    return best;
+  }
+  /** Which powered supply buildings exist (and their upgrade multipliers), for the economy tick. */
   private supplyState() {
     const powered = (t: string) => this.buildings.some((b) => b.spec.type === t && this.isPowered(b));
     const tsfCap = this.buildings.reduce((a, b) => a + (b.spec.tsfCap ? tsfCapacity(b.spec.tsfCap, b.raises) : 0), 0);
     return {
-      mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"),
-      tsfCap,
+      mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"), tsfCap,
+      millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
     };
   }
   /** Plant-schematic gating: a source is live only if its surface stock actually holds material. */
@@ -883,7 +898,7 @@ export class World {
   }
   private isPowered(b: Placed) {
     if (!b.spec.needsPower) return true;
-    return this.energized.some((s) => Vector3.Distance(s.pos, b.pos) <= (s.spec.powerRadius ?? 0));
+    return this.energized.some((s) => Vector3.Distance(s.pos, b.pos) <= this.radiusOf(s));
   }
 
   // ---- surface building selection + details ---------------------------------
@@ -910,6 +925,20 @@ export class World {
     if (s.type === "plant") roles.push("The backfill plant — step inside to build the process line");
     if (s.type === "mill") roles.push("Refines hoisted ore into concentrate (income) and makes tailings");
     let extra = "";
+    if (s.upgrade) {
+      const u = s.upgrade;
+      const mkNow = b.tier > 0 ? ` <b>Mk ${b.tier + 1}</b>` : "";
+      const effNow = Math.round((1 + b.tier * u.step) * 100);
+      const label: Record<string, string> = { mill: "throughput & income", water: "pump rate", binder: "binder delivery", power: "power radius" };
+      if (b.tier < u.max) {
+        const cost = Math.round(u.cost0 * (1 + b.tier * 0.7));
+        const effNext = Math.round((1 + (b.tier + 1) * u.step) * 100);
+        extra += `<div class="pSplit"><span>${label[u.stat]}${mkNow}</span><b>${effNow}% → ${effNext}%</b></div>
+          <button class="pBtn primary" data-act="upgrade"><b>Upgrade to Mk ${b.tier + 2} ▲</b><span>${label[u.stat]} to ${effNext}% · ${fmtMoney(cost)}</span></button>`;
+      } else {
+        extra += `<div class="pSplit"><span>${label[u.stat]}${mkNow}</span><b>${effNow}% (max)</b></div>`;
+      }
+    }
     if (s.tsfCap) {
       const cap = tsfCapacity(s.tsfCap, b.raises);
       const fillPct = this.supply.tsf.cap > 0 ? Math.round((this.supply.tsf.level / this.supply.tsf.cap) * 100) : 0;
@@ -931,6 +960,20 @@ export class World {
   }
 
   /** Pay to raise the selected TSF's embankment — adds storage, and the dam visibly grows taller. */
+  /** Pay to upgrade the selected building a tier — scales its stat, opex, and size. */
+  private upgradeBuilding() {
+    const b = this.selectedBuilding; const u = b?.spec.upgrade;
+    if (!b || !u || b.tier >= u.max) return;
+    const cost = Math.round(u.cost0 * (1 + b.tier * 0.7));
+    if (this.cash < cost) { this.hud.setStatus(`Not enough cash to upgrade ${b.spec.label} (${fmtMoney(cost)}).`); return; }
+    this.cash -= cost; b.tier++;
+    this.opexPerDay += Math.round(b.spec.opexPerDay * 0.3); // a bigger machine costs more to run
+    b.root.scaling.setAll(1 + b.tier * 0.08); // visibly beefier
+    this.recomputePower(); this.refreshSupply(); this.updateEconomy();
+    this.hud.setPanel(this.buildingPanel(b)); this.sound.build();
+    this.hud.setStatus(`${b.spec.label} upgraded to Mk ${b.tier + 1} for ${fmtMoney(cost)}.`);
+  }
+
   private raiseDam() { const b = this.selectedBuilding; if (b) this.raiseDamOn(b, true); }
   /** Raise a specific TSF's embankment a lift (used by the panel button and the auto-player). */
   private raiseDamOn(b: Placed, fromPanel: boolean): boolean {
@@ -1102,6 +1145,7 @@ export class World {
     if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
     if (act === "closebuilding") { this.deselectBuilding(); return; }
     if (act === "raisedam") { this.raiseDam(); return; }
+    if (act === "upgrade") { this.upgradeBuilding(); return; }
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
     if (!st) return;
@@ -1169,6 +1213,7 @@ export class World {
     }
     this.underground.commitReticulation(i);
   }
+  debugUpgrade(type: string) { const b = this.buildings.find((x) => x.spec.type === type); if (b) { this.selectedBuilding = b; this.upgradeBuilding(); this.selectedBuilding = null; } }
   debugBuildPlantLine() {
     this.plantInterior.debugBuildLine();                 // places + wires the line, solves, reports capacity
     this.plantInterior.setSupply(this.interiorSupply()); // schematic gating; plantThroughput stays = capacity
