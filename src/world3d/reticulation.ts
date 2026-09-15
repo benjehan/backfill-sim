@@ -37,6 +37,7 @@ export interface Segment {
 }
 
 const GREY = "#3a4048";
+const DRILL_CAPEX = 2_800_000; // sinking a dedicated production borehole
 
 export class Reticulation {
   readonly segs: Segment[] = [];
@@ -71,7 +72,31 @@ export class Reticulation {
         n++;
       }
     }
+    // OPTIONAL player-drilled dedicated boreholes for the far stope on each level (odd indices):
+    // a full-depth hole sunk near the stope + a short branch — bypasses the long shared level run,
+    // so less friction and a cheaper/safer line, at a steep drilling capex. Hidden until drilled.
+    for (let i = 0; i < 3; i++) {
+      const idx = i * 2 + 1;                 // the far stope on level i
+      const dbLen = DEPTHS[i];               // full-depth hole
+      const db = cyl("DB" + idx, 1.7, Math.abs(LEVEL_Y[i])); db.position.set(44, LEVEL_Y[i] / 2, 0); db.setEnabled(false);
+      add({ id: "DB" + idx, kind: "borehole", label: `Drilled borehole ${DEPTHS[i]}m`, levelIdx: i, lengthM: dbLen, cumLenM: dbLen, choke: false, classId: null, built: false }, db);
+      const dbr = cyl("DBr" + idx, 1.15, 16); dbr.rotation.z = Math.PI / 2; dbr.position.set(50, LEVEL_Y[i] + 2.4, 8); dbr.setEnabled(false);
+      add({ id: "DBr" + idx, kind: "branch", label: `Drilled branch to S${idx + 1}`, levelIdx: i, lengthM: 120, cumLenM: dbLen + 120, choke: false, classId: null, built: false }, dbr);
+    }
     this.repaintAll();
+  }
+
+  private drilled = new Set<number>();
+  /** Far stopes (odd index) can be served by a dedicated drilled borehole. */
+  canDrill(stopeIdx: number) { return stopeIdx % 2 === 1; }
+  isDrilled(stopeIdx: number) { return this.drilled.has(stopeIdx); }
+  /** Toggle a dedicated drilled borehole for a far stope (only before its line is built). */
+  toggleDrill(stopeIdx: number) {
+    if (!this.canDrill(stopeIdx)) return;
+    if (this.pathFor(stopeIdx).some((s) => s.built)) return; // locked once built
+    const on = this.drilled.has(stopeIdx);
+    on ? this.drilled.delete(stopeIdx) : this.drilled.add(stopeIdx);
+    for (const id of ["DB" + stopeIdx, "DBr" + stopeIdx]) { const s = this.byId.get(id)!; s.mesh.setEnabled(!on); if (on) { s.classId = null; s.choke = false; this.repaint(s); } }
   }
 
   get(id: string) { return this.byId.get(id); }
@@ -89,13 +114,22 @@ export class Reticulation {
   effHeadMpa(levelIdx: number): number {
     return staticHeadMpa(DEPTHS[levelIdx]) * Math.pow(CHOKE_HEAD_RELIEF, this.chokeCount(levelIdx));
   }
-  /** Pressure this leg must hold. */
+  /** Pressure this leg must hold. Drilled legs use their own hole's choke, not the shared trunk's. */
   pressureMpa(seg: Segment): number {
+    if (seg.id.startsWith("DB")) {
+      const db = this.byId.get("DB" + seg.id.replace(/^DBr?/, ""))!; // the drilled hole for this leg
+      const head = staticHeadMpa(DEPTHS[seg.levelIdx]) * (db.choke ? CHOKE_HEAD_RELIEF : 1);
+      return head + frictionMpa(seg.cumLenM) + SURGE_MPA;
+    }
     return this.effHeadMpa(seg.levelIdx) + frictionMpa(seg.cumLenM) + SURGE_MPA;
   }
   cls(seg: Segment): PipeClass | null { return seg.classId == null ? null : PIPE_CLASSES[seg.classId]; }
   valid(seg: Segment): boolean { const c = this.cls(seg); return !!c && c.ratingMpa >= this.pressureMpa(seg); }
-  cost(seg: Segment): number { const c = this.cls(seg); return c ? Math.round(c.costPerM * seg.lengthM) + (seg.choke ? CHOKE_CAPEX : 0) : 0; }
+  cost(seg: Segment): number {
+    const c = this.cls(seg); if (!c) return 0;
+    const drill = seg.id.startsWith("DB") && !seg.id.startsWith("DBr") ? DRILL_CAPEX : 0; // sinking the hole itself
+    return Math.round(c.costPerM * seg.lengthM) + (seg.choke ? CHOKE_CAPEX : 0) + drill;
+  }
 
   // ---- editing (free while planning; locked once built) ----------------------
   cycleClass(id: string) {
@@ -112,6 +146,7 @@ export class Reticulation {
 
   // ---- path helpers ----------------------------------------------------------
   pathFor(stopeIdx: number): Segment[] {
+    if (this.drilled.has(stopeIdx)) return [this.byId.get("DB" + stopeIdx)!, this.byId.get("DBr" + stopeIdx)!];
     const level = Math.floor(stopeIdx / 2);
     const path: Segment[] = [];
     for (let i = 0; i <= level; i++) path.push(this.byId.get("B" + (i + 1))!);
@@ -119,6 +154,8 @@ export class Reticulation {
     path.push(this.byId.get("Br" + (stopeIdx + 1))!);
     return path;
   }
+  /** Total pipe length from surface to the stope along the current path (drives the pour's friction). */
+  pathTotalLenM(stopeIdx: number): number { const p = this.pathFor(stopeIdx); return p[p.length - 1].cumLenM; }
   pathCanBuild(stopeIdx: number): boolean { return this.pathFor(stopeIdx).every((s) => s.classId != null && this.valid(s)); }
   pathReady(stopeIdx: number): boolean { return this.pathFor(stopeIdx).every((s) => s.built && this.valid(s)); }
   pathPlannedCost(stopeIdx: number): number { return this.pathFor(stopeIdx).filter((s) => !s.built).reduce((a, s) => a + this.cost(s), 0); }

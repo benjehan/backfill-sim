@@ -1069,8 +1069,13 @@ export class World {
       }).join("");
       const canBuild = net.pathCanBuild(idx);
       const planned = net.pathPlannedCost(idx);
+      const drill = net.canDrill(idx)
+        ? `<button class="chkBtn ${net.isDrilled(idx) ? "on" : ""}" data-act="drill:${idx}">${net.isDrilled(idx) ? "☑" : "☐"} Dedicated drilled borehole</button>
+           <div class="pNote">${net.isDrilled(idx) ? "Sinking a dedicated hole to this stope — short line, less friction, but a steep drilling capex." : "This far stope rides the long shared level run. Drill a dedicated borehole for a shorter, cheaper, safer line."}</div>`
+        : "";
       body = `${fillPick}${this.recipeSummary(st)}
         <div class="pNote">Design each leg: pick a class that out-rates its pressure. Deeper legs carry more head — a borehole ⌇ choke relieves everything below it. Legs are shared between stopes.</div>
+        ${drill}
         ${this.hglChart(idx)}
         <div class="segList">${rows}</div>
         <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : "set a valid class on every leg"}</span></button>`;
@@ -1170,6 +1175,7 @@ export class World {
     }
     if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
     if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
+    if (act.startsWith("drill:")) { this.underground.net.toggleDrill(+act.slice(6)); this.underground.net.highlightPath(+act.slice(6)); this.renderStopePanel(); return; }
     if (act === "build") {
       if (st.status !== "available") return;
       const idx = this.underground.stopes.indexOf(st);

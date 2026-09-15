@@ -252,6 +252,7 @@ export class Underground {
     const weak = this.net.pathWeakest(stopeIdx);
     if (!weak) return null;
     stope.cls = weak.cls; stope.choke = weak.choke; stope.status = "piped";
+    stope.lengthM = this.net.pathTotalLenM(stopeIdx); // drilled paths are shorter → less pour friction
     (stope.mesh.material as StandardMaterial).diffuseColor = Color3.FromHexString(STATUS_COLOR.piped);
     return { cost, cls: weak.cls, choke: weak.choke };
   }
