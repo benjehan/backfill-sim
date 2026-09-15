@@ -77,6 +77,7 @@ export class World {
   private ended = false;
   private opexPerDay = 0;
   private safetyIncidents = 0;
+  private lastGrade = "";
   private supply = new SupplyChain();
   private millDayIncome = 0;
   private lastDayShown = 0;
@@ -511,8 +512,12 @@ export class World {
     score += this.cash > 0 ? 2 : 0;
     score += this.cash > START_CASH * 0.3 ? 1 : 0;
     score += minedFrac > 0.8 ? 1 : 0; // reward extracting the resource before the horizon
-    let grade = score >= 8 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D";
-    if (this.safetyIncidents > 0 && (grade === "S" || grade === "A")) grade = "B"; // a burst caps the review
+    const order = ["S", "A", "B", "C", "D"];
+    const baseGi = order.indexOf(score >= 8 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D");
+    // safety costs grade tiers, monotonically: 1 incident -1, a couple -2, a rash -3
+    const steps = this.safetyIncidents >= 4 ? 3 : this.safetyIncidents >= 2 ? 2 : this.safetyIncidents === 1 ? 1 : 0;
+    const grade = order[Math.min(order.length - 1, baseGi + steps)];
+    this.lastGrade = grade;
     this.hud.showResult(`
       <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
       <div class="rsGrade grade-${grade}">${grade}</div>
@@ -521,7 +526,7 @@ export class World {
         <div><span>On time</span><b>${onTime}/${total}</b></div>
         <div><span>Orebody extracted</span><b>${Math.round(minedFrac * 100)}%</b></div>
         <div><span>Cash</span><b>${fmtMoney(this.cash)}</b></div>
-        <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " burst" : "clean"}</b></div>
+        <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " incident" + (this.safetyIncidents > 1 ? "s" : "") : "clean"}</b></div>
       </div>
       <button class="pBtn primary" data-act="restart"><b>Run again</b></button>`);
   }
@@ -1194,7 +1199,7 @@ export class World {
       }
       const c = this.underground.counts();
       const mined = Math.round((1 - this.supply.oreReserve.level / ORE_RESERVE_START) * 100);
-      L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}%`);
+      L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}% GRADE=${this.lastGrade}`);
       L("DONE");
     } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }
   }
