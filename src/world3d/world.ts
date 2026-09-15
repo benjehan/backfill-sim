@@ -164,6 +164,7 @@ export class World {
     window.addEventListener("resize", () => this.engine.resize());
     (window as any).__world = this;
     if (typeof location !== "undefined" && location.hash === "#autorun") setTimeout(() => this.debugAutoRun(), 400);
+    if (typeof location !== "undefined" && location.hash === "#smartrun") setTimeout(() => this.debugSmartRun(), 400);
   }
 
   private maybeShowIntro() {
@@ -893,18 +894,20 @@ export class World {
   }
 
   /** Pay to raise the selected TSF's embankment — adds storage, and the dam visibly grows taller. */
-  private raiseDam() {
-    const b = this.selectedBuilding;
-    if (!b || !b.spec.tsfCap || b.raises >= TSF_MAX_RAISES) return;
+  private raiseDam() { const b = this.selectedBuilding; if (b) this.raiseDamOn(b, true); }
+  /** Raise a specific TSF's embankment a lift (used by the panel button and the auto-player). */
+  private raiseDamOn(b: Placed, fromPanel: boolean): boolean {
+    if (!b.spec.tsfCap || b.raises >= TSF_MAX_RAISES) return false;
     const cost = tsfRaiseCost(b.raises);
-    if (this.cash < cost) { this.hud.setStatus(`Not enough cash to raise the dam (${fmtMoney(cost)}).`); return; }
+    if (this.cash < cost) { if (fromPanel) this.hud.setStatus(`Not enough cash to raise the dam (${fmtMoney(cost)}).`); return false; }
     this.cash -= cost;
     b.raises++;
     b.root.scaling.y = 1 + b.raises * 0.22; // upstream lift — the dam grows upward
     this.refreshSupply();
     this.updateEconomy();
-    this.hud.setPanel(this.buildingPanel(b));
+    if (fromPanel) this.hud.setPanel(this.buildingPanel(b));
     this.hud.setStatus(`Dam raised to lift ${b.raises} for ${fmtMoney(cost)} — +${Math.round(b.spec.tsfCap * 0.5).toLocaleString()} t of tailings storage.`);
+    return true;
   }
 
   private updateMarker(b: Placed, showRed: boolean) {
@@ -1150,6 +1153,48 @@ export class World {
       }
       const c = this.underground.counts();
       L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} reserveLeft=${Math.round(this.supply.oreReserve.level / 1000)}k`);
+      L("DONE");
+    } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }
+  }
+
+  /** Spec a stope's whole reticulation path uniformly to out-rate the FULL stope pressure
+   *  (so pathWeakest is safe), choking deep boreholes to relieve head. The skilled way. */
+  private smartReticulate(i: number) {
+    const net = this.underground.net; const st = this.underground.stopes[i];
+    if (st.status === "locked") st.status = "available";
+    const legs = net.pathFor(i).filter((s) => !s.built);
+    if (!legs.length) return;
+    for (const seg of legs) if (seg.kind === "borehole" && st.levelIdx >= 1) seg.choke = true; // relieve static head on deep lines
+    // highest class any leg needs, applied uniformly + one step of margin
+    let need = 0;
+    for (const seg of legs) { let c = 3; for (let k = 0; k < 4; k++) { seg.classId = k; if (net.valid(seg)) { c = k; break; } } need = Math.max(need, c); }
+    const cls = Math.min(3, need + 1);
+    for (const seg of legs) seg.classId = cls;
+    this.underground.commitReticulation(i);
+  }
+
+  /** Headless SKILLED self-play: pumpable-yet-strong mix, over-rated uniform lines with chokes,
+   *  reinforce on geotech, raise the dam before it chokes the mill. Proves the game rewards skill. */
+  debugSmartRun() {
+    const L = (s: string) => console.log("SMARTRUN|" + s);
+    try {
+      for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
+      this.debugSetRecipe(0.73, 320); // pumpable (low friction) yet strong enough for the deepest targets
+      L(`built cash=${(this.cash / 1e6).toFixed(1)}m recipe=0.73/320`);
+      this.descend();
+      let guard = 0;
+      while (!this.ended && guard++ < 400) {
+        if (this.activeEvent) this.resolveEvent(0); // reinforce / mitigate — the safe option
+        this.underground.stopes.forEach((s, i) => { if (s.status === "available") { try { this.smartReticulate(i); } catch { /* not buildable yet */ } } });
+        this.underground.stopes.forEach((s, i) => { if (s.status === "piped") { s.signBarricade = true; s.signPourNote = true; s.signLowStart = true; this.underground.startPour(s); } });
+        // raise the dam before the TSF chokes the mill
+        if (this.supply.tsf.cap > 0 && this.supply.tsf.level > this.supply.tsf.cap * 0.88) { const tsf = this.buildings.find((b) => b.spec.tsfCap); if (tsf) this.raiseDamOn(tsf, false); }
+        this.debugAdvance(2);
+        if (guard % 4 === 0) L(`day ${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${this.underground.counts().cured} tsf=${Math.round(this.supply.tsf.level / 1000)}k/${Math.round(this.supply.tsf.cap / 1000)}k safety=${this.safetyIncidents}`);
+      }
+      const c = this.underground.counts();
+      const mined = Math.round((1 - this.supply.oreReserve.level / ORE_RESERVE_START) * 100);
+      L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}%`);
       L("DONE");
     } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }
   }

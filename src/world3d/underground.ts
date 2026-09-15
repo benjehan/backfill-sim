@@ -144,7 +144,7 @@ export class Underground {
         const isPrimary = sx === 32; const levelIdx = LEVELS.indexOf(lv);
         this.stopes.push({
           id: "", mesh: chamber, fillMesh: fill, floorY, chamberH: CH_H, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
-          volumeM3: 9000 + sx * 90 + lv.depthM * 6, placedM3: 0,
+          volumeM3: 6000 + sx * 55 + lv.depthM * 3.5, placedM3: 0,
           availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
           targetUcsKpa: 500 + levelIdx * 120 + (isPrimary ? 180 : 0), // primaries carry higher strength targets

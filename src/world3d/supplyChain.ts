@@ -11,13 +11,12 @@
 export interface Stock { level: number; cap: number; }
 
 // ---- economy anchors (grounded in the P&C course throughput/utilisation) ----
-export const MINE_HOIST_TPD = 3200;        // ROM ore hoisted per day while reserves remain
-export const MILL_ORE_TPD = 3000;          // mill ore throughput per day (the bottleneck)
-export const MILL_NET_PER_T = 145;         // net concentrate value per tonne milled ($)
+export const MINE_HOIST_TPD = 4000;        // ROM ore hoisted per day while reserves remain
+export const MILL_ORE_TPD = 3600;          // mill ore throughput per day (the bottleneck)
+export const MILL_NET_PER_T = 130;         // net concentrate value per tonne milled ($)
 export const TAILINGS_YIELD = 0.92;        // tonnes of tailings per tonne of ore milled
-export const TAILINGS_REUSE = 0.5;         // at most ~half of tailings can return underground
 
-export const ORE_RESERVE_START = 170_000;  // the orebody — hoisting depletes it; the mine runs down late-campaign
+export const ORE_RESERVE_START = 230_000;  // the orebody — hoisting depletes it; the mine runs down late-campaign
 export const ORE_PAD_CAP = 45_000;         // ROM stockpile capacity (t)
 export const TAILINGS_BUFFER_CAP = 9_000;  // thickened-tailings surge buffer feeding the plant (t)
 export const WATER_POND_CAP = 60_000;      // process-water pond (m³)
@@ -91,8 +90,10 @@ export class SupplyChain {
         notes.push(this.tsf.cap <= 0 ? "⚠ No TSF — nowhere for tailings, mill choked. Build a TSF."
           : "⚠ TSF full — mill throttled. Raise the dam or build another TSF.");
       }
-      // Route: the reusable half feeds the plant buffer (overflow to TSF); the rest is forced to the TSF.
-      const toBuffer = Math.min(tail * TAILINGS_REUSE, bufFree);
+      // Route: the plant buffer takes what it can hold; the excess is forced to the TSF.
+      // Over a campaign the plant reuses only part of the tailings (void < production),
+      // so the bulk still lands in the TSF — the ~50% rule emerges instead of being imposed.
+      const toBuffer = Math.min(tail, bufFree);
       this.tailings.level += toBuffer;
       toTsf = tail - toBuffer;
       this.tsf.level = Math.min(this.tsf.cap, this.tsf.level + toTsf);
