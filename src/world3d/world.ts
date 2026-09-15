@@ -364,7 +364,7 @@ export class World {
       // plug (seal the barricade) and cap (working surface) pours are slower/careful
       const frac = s.placedM3 / s.volumeM3;
       const subRate = frac < 0.08 ? 0.5 : frac > 0.92 ? 0.7 : 1;
-      const want = Math.min(this.pourRatePerDay() * f * fill.rateMult * subRate * dd, s.volumeM3 - s.placedM3);
+      const want = Math.min(this.pourRatePerDay() * f * fill.rateMult * subRate * s.lineBoost * dd, s.volumeM3 - s.placedM3);
       const binderNeed = (want * this.recipeFor(s).binderKgPerM3 * fill.binderMult) / 1000; // tonnes at full rate
       const draw = this.supply.drawForPour(want, binderNeed); // throttles to the scarcest of tailings/water/binder
       const delta = draw.m3;
@@ -1059,11 +1059,13 @@ export class World {
         const c = net.cls(seg);
         const ok = net.valid(seg);
         const choke = seg.kind === "borehole"
-          ? `<button class="segMini ${seg.choke ? "on" : ""}" data-act="choke:${seg.id}" ${seg.built ? "disabled" : ""} title="choke station">⌇</button>` : "";
+          ? `<button class="segMini ${seg.choke ? "on" : ""}" data-act="choke:${seg.id}" ${seg.built ? "disabled" : ""} title="choke station — sheds head">⌇</button>` : "";
+        const boost = seg.kind === "level"
+          ? `<button class="segMini ${seg.booster ? "on" : ""}" data-act="boost:${seg.id}" ${seg.built ? "disabled" : ""} title="booster pump — faster pour, stronger pipe">⇪</button>` : "";
         return `<div class="segRow ${seg.built ? "built" : ""}">
           <div class="segMain"><b>${seg.label}</b><span>holds ${p.toFixed(1)} MPa · ${Math.round(seg.lengthM)} m</span></div>
           <button class="segMini cls" data-act="seg:${seg.id}" ${seg.built ? "disabled" : ""}>${c ? c.name : "— set —"}</button>
-          ${choke}
+          ${choke}${boost}
           <span class="segChk ${c ? (ok ? "ok" : "bad") : ""}">${c ? (ok ? "✓" : "✗") : "·"}</span>
         </div>`;
       }).join("");
@@ -1074,7 +1076,7 @@ export class World {
            <div class="pNote">${net.isDrilled(idx) ? "Sinking a dedicated hole to this stope — short line, less friction, but a steep drilling capex." : "This far stope rides the long shared level run. Drill a dedicated borehole for a shorter, cheaper, safer line."}</div>`
         : "";
       body = `${fillPick}${this.recipeSummary(st)}
-        <div class="pNote">Design each leg: pick a class that out-rates its pressure. Deeper legs carry more head — a borehole ⌇ choke relieves everything below it. Legs are shared between stopes.</div>
+        <div class="pNote">Design each leg: pick a class that out-rates its pressure. A borehole ⌇ choke sheds head (cheaper deep pipe); a level ⇪ booster pours faster but the line must hold more. Legs are shared between stopes.</div>
         ${drill}
         ${this.hglChart(idx)}
         <div class="segList">${rows}</div>
@@ -1176,6 +1178,7 @@ export class World {
     if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
     if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
     if (act.startsWith("drill:")) { this.underground.net.toggleDrill(+act.slice(6)); this.underground.net.highlightPath(+act.slice(6)); this.renderStopePanel(); return; }
+    if (act.startsWith("boost:")) { this.underground.net.toggleBooster(act.slice(6)); this.renderStopePanel(); return; }
     if (act === "build") {
       if (st.status !== "available") return;
       const idx = this.underground.stopes.indexOf(st);

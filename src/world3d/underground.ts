@@ -11,7 +11,7 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
 import { CURE_DAYS, type PipeClass } from "./backfillModel.js";
-import { Reticulation } from "./reticulation.js";
+import { Reticulation, BOOST_FLOW } from "./reticulation.js";
 
 export type StopeStatus = "locked" | "available" | "piped" | "pouring" | "curing" | "cured";
 
@@ -37,6 +37,7 @@ export interface StopeUG {
   status: StopeStatus;
   cls: PipeClass | null;
   choke: boolean;
+  lineBoost: number;   // pour-rate multiplier from a booster on the line (1 = none)
   cureStartDay: number;
   pipes: Mesh[];
   // live-pour runtime
@@ -145,7 +146,7 @@ export class Underground {
         this.stopes.push({
           id: "", mesh: chamber, fillMesh: fill, floorY, chamberH: CH_H, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
           volumeM3: 6000 + sx * 55 + lv.depthM * 3.5, placedM3: 0,
-          availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, cureStartDay: 0, pipes: [],
+          availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, lineBoost: 1, cureStartDay: 0, pipes: [],
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
           targetUcsKpa: 500 + levelIdx * 120 + (isPrimary ? 180 : 0), // primaries carry higher strength targets
           ucsAchievedKpa: 0, ucsPass: null,
@@ -253,6 +254,7 @@ export class Underground {
     if (!weak) return null;
     stope.cls = weak.cls; stope.choke = weak.choke; stope.status = "piped";
     stope.lengthM = this.net.pathTotalLenM(stopeIdx); // drilled paths are shorter → less pour friction
+    stope.lineBoost = this.net.pathHasBooster(stopeIdx) ? BOOST_FLOW : 1; // a booster pours faster
     (stope.mesh.material as StandardMaterial).diffuseColor = Color3.FromHexString(STATUS_COLOR.piped);
     return { cost, cls: weak.cls, choke: weak.choke };
   }

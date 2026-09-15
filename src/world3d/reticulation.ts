@@ -30,7 +30,8 @@ export interface Segment {
   levelIdx: number;                    // 0..2 the level this leg reaches/serves
   lengthM: number;
   cumLenM: number;                     // path length from surface to the end of this leg
-  choke: boolean;                      // borehole legs only
+  choke: boolean;                      // borehole legs only — sheds static head
+  booster: boolean;                    // level legs only — adds driving pressure (faster pour, stronger pipe)
   classId: number | null;
   built: boolean;
   mesh: Mesh;
@@ -38,6 +39,9 @@ export interface Segment {
 
 const GREY = "#3a4048";
 const DRILL_CAPEX = 2_800_000; // sinking a dedicated production borehole
+const BOOST_CAPEX = 1_500_000; // a booster/positive-displacement pump station
+const BOOST_PRESSURE = 3;      // MPa of driving pressure a booster adds (leg + downstream must hold it)
+export const BOOST_FLOW = 1.4; // pour-rate multiplier on a boosted line
 
 export class Reticulation {
   readonly segs: Segment[] = [];
@@ -56,19 +60,19 @@ export class Reticulation {
       const top = i === 0 ? 0 : LEVEL_Y[i - 1];
       const m = cyl("B" + (i + 1), 1.7, Math.abs(LEVEL_Y[i] - top));
       m.position.set(2.4, (top + LEVEL_Y[i]) / 2, 0);
-      add({ id: "B" + (i + 1), kind: "borehole", label: `Borehole ${i === 0 ? "surface" : DEPTHS[i - 1] + "m"}→${DEPTHS[i]}m`, levelIdx: i, lengthM: BORE_LEN, cumLenM: BORE_LEN * (i + 1), choke: false, classId: null, built: false }, m);
+      add({ id: "B" + (i + 1), kind: "borehole", label: `Borehole ${i === 0 ? "surface" : DEPTHS[i - 1] + "m"}→${DEPTHS[i]}m`, levelIdx: i, lengthM: BORE_LEN, cumLenM: BORE_LEN * (i + 1), choke: false, booster: false, classId: null, built: false }, m);
     }
     // level runs (drive-level distribution pipe)
     for (let i = 0; i < 3; i++) {
       const m = cyl("R" + (i + 1), 1.35, 58); m.rotation.z = Math.PI / 2; m.position.set(31, LEVEL_Y[i] + 2.4, 0);
-      add({ id: "R" + (i + 1), kind: "level", label: `Level ${DEPTHS[i]}m run`, levelIdx: i, lengthM: RUN_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN, choke: false, classId: null, built: false }, m);
+      add({ id: "R" + (i + 1), kind: "level", label: `Level ${DEPTHS[i]}m run`, levelIdx: i, lengthM: RUN_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN, choke: false, booster: false, classId: null, built: false }, m);
     }
     // stope branches (two per level, at x = 32 and 56)
     let n = 1;
     for (let i = 0; i < 3; i++) {
       for (const sx of [32, 56]) {
         const m = cyl("Br" + n, 1.15, 15); m.rotation.x = Math.PI / 2; m.position.set(sx, LEVEL_Y[i] + 2.4, 8);
-        add({ id: "Br" + n, kind: "branch", label: `Branch to S${n}`, levelIdx: i, lengthM: BRANCH_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN + BRANCH_LEN, choke: false, classId: null, built: false }, m);
+        add({ id: "Br" + n, kind: "branch", label: `Branch to S${n}`, levelIdx: i, lengthM: BRANCH_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN + BRANCH_LEN, choke: false, booster: false, classId: null, built: false }, m);
         n++;
       }
     }
@@ -79,9 +83,9 @@ export class Reticulation {
       const idx = i * 2 + 1;                 // the far stope on level i
       const dbLen = DEPTHS[i];               // full-depth hole
       const db = cyl("DB" + idx, 1.7, Math.abs(LEVEL_Y[i])); db.position.set(44, LEVEL_Y[i] / 2, 0); db.setEnabled(false);
-      add({ id: "DB" + idx, kind: "borehole", label: `Drilled borehole ${DEPTHS[i]}m`, levelIdx: i, lengthM: dbLen, cumLenM: dbLen, choke: false, classId: null, built: false }, db);
+      add({ id: "DB" + idx, kind: "borehole", label: `Drilled borehole ${DEPTHS[i]}m`, levelIdx: i, lengthM: dbLen, cumLenM: dbLen, choke: false, booster: false, classId: null, built: false }, db);
       const dbr = cyl("DBr" + idx, 1.15, 16); dbr.rotation.z = Math.PI / 2; dbr.position.set(50, LEVEL_Y[i] + 2.4, 8); dbr.setEnabled(false);
-      add({ id: "DBr" + idx, kind: "branch", label: `Drilled branch to S${idx + 1}`, levelIdx: i, lengthM: 120, cumLenM: dbLen + 120, choke: false, classId: null, built: false }, dbr);
+      add({ id: "DBr" + idx, kind: "branch", label: `Drilled branch to S${idx + 1}`, levelIdx: i, lengthM: 120, cumLenM: dbLen + 120, choke: false, booster: false, classId: null, built: false }, dbr);
     }
     this.repaintAll();
   }
@@ -114,21 +118,33 @@ export class Reticulation {
   effHeadMpa(levelIdx: number): number {
     return staticHeadMpa(DEPTHS[levelIdx]) * Math.pow(CHOKE_HEAD_RELIEF, this.chokeCount(levelIdx));
   }
-  /** Pressure this leg must hold. Drilled legs use their own hole's choke, not the shared trunk's. */
+  /** True if a booster upstream on this leg's path re-pressurises it (leg + downstream hold the extra). */
+  private boostedUpstream(seg: Segment): boolean {
+    if (seg.kind === "level") return seg.booster;
+    if (seg.kind === "branch") { // its level run may carry a booster
+      const lvlId = seg.id.startsWith("DBr") ? null : "R" + (seg.levelIdx + 1);
+      return lvlId ? !!this.byId.get(lvlId)?.booster : false;
+    }
+    return false;
+  }
+  /** Pressure this leg must hold. Drilled legs use their own hole's choke; boosters add driving pressure. */
   pressureMpa(seg: Segment): number {
+    const boost = this.boostedUpstream(seg) ? BOOST_PRESSURE : 0;
     if (seg.id.startsWith("DB")) {
       const db = this.byId.get("DB" + seg.id.replace(/^DBr?/, ""))!; // the drilled hole for this leg
       const head = staticHeadMpa(DEPTHS[seg.levelIdx]) * (db.choke ? CHOKE_HEAD_RELIEF : 1);
-      return head + frictionMpa(seg.cumLenM) + SURGE_MPA;
+      return head + frictionMpa(seg.cumLenM) + SURGE_MPA + boost;
     }
-    return this.effHeadMpa(seg.levelIdx) + frictionMpa(seg.cumLenM) + SURGE_MPA;
+    return this.effHeadMpa(seg.levelIdx) + frictionMpa(seg.cumLenM) + SURGE_MPA + boost;
   }
+  /** Does the stope's path carry a booster (→ faster pour)? */
+  pathHasBooster(stopeIdx: number): boolean { return this.pathFor(stopeIdx).some((s) => s.kind === "level" && s.booster); }
   cls(seg: Segment): PipeClass | null { return seg.classId == null ? null : PIPE_CLASSES[seg.classId]; }
   valid(seg: Segment): boolean { const c = this.cls(seg); return !!c && c.ratingMpa >= this.pressureMpa(seg); }
   cost(seg: Segment): number {
     const c = this.cls(seg); if (!c) return 0;
     const drill = seg.id.startsWith("DB") && !seg.id.startsWith("DBr") ? DRILL_CAPEX : 0; // sinking the hole itself
-    return Math.round(c.costPerM * seg.lengthM) + (seg.choke ? CHOKE_CAPEX : 0) + drill;
+    return Math.round(c.costPerM * seg.lengthM) + (seg.choke ? CHOKE_CAPEX : 0) + (seg.booster ? BOOST_CAPEX : 0) + drill;
   }
 
   // ---- editing (free while planning; locked once built) ----------------------
@@ -142,6 +158,11 @@ export class Reticulation {
     const s = this.byId.get(id); if (!s || s.built || s.kind !== "borehole") return;
     s.choke = !s.choke;
     this.repaintAll(); // choke changes pressures below it
+  }
+  toggleBooster(id: string) {
+    const s = this.byId.get(id); if (!s || s.built || s.kind !== "level") return;
+    s.booster = !s.booster;
+    this.repaintAll(); // booster adds pressure to this leg and downstream
   }
 
   // ---- path helpers ----------------------------------------------------------
