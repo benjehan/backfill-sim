@@ -1169,6 +1169,10 @@ export class World {
     }
     this.underground.commitReticulation(i);
   }
+  debugBuildPlantLine() {
+    this.plantInterior.debugBuildLine();                 // places + wires the line, solves, reports capacity
+    this.plantInterior.setSupply(this.interiorSupply()); // schematic gating; plantThroughput stays = capacity
+  }
   debugPour(i: number) { this.underground.startPour(this.underground.stopes[i]); }
   debugSelect(i: number) { this.selectStope(this.underground.stopes[i]); }
   debugAdvance(days: number) { this.paused = false; const step = 0.25; for (let d = 0; d < days && !this.ended; d += step) this.advanceTime((SECONDS_PER_DAY * step) / this.speed); }
@@ -1218,13 +1222,19 @@ export class World {
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
       this.debugSetRecipe(0.73, 320); // pumpable (low friction) yet strong enough for the deepest targets
-      L(`built cash=${(this.cash / 1e6).toFixed(1)}m recipe=0.73/320`);
+      this.debugBuildPlantLine(); // stand up the process line so pours run at full plant rate
+      L(`built cash=${(this.cash / 1e6).toFixed(1)}m recipe=0.73/320 plantThroughput=${this.plantThroughput.toFixed(0)}m3h`);
       this.descend();
       let guard = 0;
       while (!this.ended && guard++ < 400) {
         if (this.activeEvent) this.resolveEvent(0); // reinforce / mitigate — the safe option
         this.underground.stopes.forEach((s, i) => { if (s.status === "available") { try { this.smartReticulate(i); } catch { /* not buildable yet */ } } });
-        this.underground.stopes.forEach((s, i) => { if (s.status === "piped") { s.signBarricade = true; s.signPourNote = true; s.signLowStart = true; this.underground.startPour(s); } });
+        // serialize pours: one stope at a time grabs the full tailings feed, completes and cures
+        // sooner, and unlocks its secondary earlier — beats splitting the feed across parallel pours
+        if (!this.underground.stopes.some((s) => s.status === "pouring")) {
+          const next = this.underground.stopes.find((s) => s.status === "piped");
+          if (next) { next.signBarricade = true; next.signPourNote = true; next.signLowStart = true; this.underground.startPour(next); }
+        }
         // raise the dam before the TSF chokes the mill
         if (this.supply.tsf.cap > 0 && this.supply.tsf.level > this.supply.tsf.cap * 0.88) { const tsf = this.buildings.find((b) => b.spec.tsfCap); if (tsf) this.raiseDamOn(tsf, false); }
         this.debugAdvance(2);

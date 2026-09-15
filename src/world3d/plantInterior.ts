@@ -61,16 +61,21 @@ export class PlantInterior {
   center() { return new Vector3(0, 0, 0); }
 
   private supplyNote = "";
-  /** Gate the plant's raw-material sources on the surface supply chain. */
+  private lastSupply = { tailings: true, binder: true, water: true };
+  /** Gate the plant's raw-material sources on the surface supply chain (schematic view only). */
   setSupply(s: { tailings: boolean; binder: boolean; water: boolean }) {
-    const cap = (type: string, on: boolean) => { const m = this.plant.machines.find((x) => x.type === type); if (m) m.capOverride = on ? undefined : 0; };
-    cap("src_tailings", s.tailings); cap("src_binder", s.binder); cap("src_water", s.water);
+    this.lastSupply = s;
+    this.applySupplyCaps();
     const missing: string[] = [];
     if (!s.tailings) missing.push("tailings (build a Mill)");
     if (!s.binder) missing.push("binder (Rail terminal)");
     if (!s.water) missing.push("water (Water pump)");
     this.supplyNote = missing.length ? `⚠ No inbound ${missing.join(", ")} on the surface.` : "";
     this.solveSync();
+  }
+  private applySupplyCaps() {
+    const cap = (type: string, on: boolean) => { const m = this.plant.machines.find((x) => x.type === type); if (m) m.capOverride = on ? undefined : 0; };
+    cap("src_tailings", this.lastSupply.tailings); cap("src_binder", this.lastSupply.binder); cap("src_water", this.lastSupply.water);
   }
 
   enter() { this.root.setEnabled(true); this.overlay.classList.remove("hidden"); this.solveSync(); }
@@ -186,7 +191,7 @@ export class PlantInterior {
       const body = mm.parts[0];
       if (body?.material) (body.material as StandardMaterial).emissiveColor = Color3.FromHexString(STATE_EMIT[m.state] ?? "#101418");
     }
-    this.onThroughput(this.plant.deliveredM3h);
+    this.onThroughput(this.solveCapacity()); // report rated capacity; starvation is applied at pour time
     this.updateOverlay();
     if (this.selected) this.renderDetail(this.selected);
   }
@@ -321,6 +326,16 @@ export class PlantInterior {
   }
   private doRemove(id: string) {
     this.deselect(); this.plant.removeMachine(id); this.rebuild(); this.solveSync();
+  }
+
+  /** The line's rated throughput when the sources are fed — used to drive the campaign
+   *  pour rate. Momentary buffer starvation is handled separately at pour time (drawForPour). */
+  solveCapacity(): number {
+    for (const t of ["src_tailings", "src_binder", "src_water"]) { const m = this.plant.machines.find((x) => x.type === t); if (m) m.capOverride = undefined; }
+    this.plant.solve();
+    const cap = this.plant.deliveredM3h;
+    this.applySupplyCaps(); this.plant.solve(); // restore the gated state for the schematic
+    return cap;
   }
 
   /** Debug/testing: place and wire a full working line. */
