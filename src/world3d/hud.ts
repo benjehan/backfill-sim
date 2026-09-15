@@ -13,6 +13,8 @@ export interface HudCallbacks {
   onLab: () => void;
   onRecipe: (solids: number, binder: number) => void;
   onBinderTopup: () => void;
+  onToggleSound: () => void;
+  onHelp: () => void;
 }
 
 const SPEED_LABELS = ["1×", "2×", "4×", "8×"];
@@ -40,6 +42,7 @@ export class Hud {
   private binderV!: HTMLElement;
   private binderBar!: HTMLElement;
   private buttons = new Map<string, HTMLButtonElement>();
+  private soundBtn!: HTMLButtonElement;
   private armed: string | null = null;
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
@@ -53,6 +56,8 @@ export class Hud {
         <button class="whSpd" id="whPause">⏸</button>
         ${SPEED_LABELS.map((l, i) => `<button class="whSpd" data-spd="${i}">${l}</button>`).join("")}
         <button class="whSpd whLab" id="whLab">🧪 Lab</button>
+        <button class="whSpd" id="whSound" title="sound on/off">🔊</button>
+        <button class="whSpd" id="whHelp" title="how the economy works">💰</button>
       </div>
       <div class="whSched" id="whSched"></div>
       <div class="whLabPanel hidden" id="whLabPanel">
@@ -107,6 +112,10 @@ export class Hud {
     this.binderV = root.querySelector("#whBinderV")!;
     this.binderBar = root.querySelector("#binderBar")!;
     root.querySelector("#whTopup")!.addEventListener("click", cb.onBinderTopup);
+    const soundBtn = root.querySelector("#whSound") as HTMLButtonElement;
+    soundBtn.addEventListener("click", () => cb.onToggleSound());
+    this.soundBtn = soundBtn;
+    root.querySelector("#whHelp")!.addEventListener("click", () => cb.onHelp());
     root.querySelectorAll<HTMLButtonElement>(".whSpd[data-spd]").forEach((b) => {
       this.speedBtns.push(b);
       b.addEventListener("click", () => cb.onSpeed(+b.dataset.spd!));
@@ -213,6 +222,8 @@ export class Hud {
     if (text) { this.objectiveEl.innerHTML = text; this.objectiveEl.classList.remove("hidden"); }
     else this.objectiveEl.classList.add("hidden");
   }
+
+  setSoundIcon(on: boolean) { this.soundBtn.textContent = on ? "🔊" : "🔇"; this.soundBtn.classList.toggle("on", on); }
 
   setHidden(hidden: boolean) { this.rootEl.classList.toggle("hidden", hidden); }
   toggleLab(readout: string) { this.labPanel.classList.toggle("hidden"); if (!this.labPanel.classList.contains("hidden")) this.setLabReadout(readout); }

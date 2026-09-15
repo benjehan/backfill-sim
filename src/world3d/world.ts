@@ -35,6 +35,7 @@ import {
   BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
+import { SoundKit } from "./sound.js";
 import { SupplyChain, tsfCapacity, tsfRaiseCost, TSF_MAX_RAISES, ORE_RESERVE_START } from "./supplyChain.js";
 
 const SKY = "#8ec5e6";
@@ -78,6 +79,9 @@ export class World {
   private opexPerDay = 0;
   private safetyIncidents = 0;
   private lastGrade = "";
+  private sound = new SoundKit();
+  private soundOn = true;
+  private ambientStarted = false;
   private supply = new SupplyChain();
   private millDayIncome = 0;
   private lastDayShown = 0;
@@ -147,6 +151,8 @@ export class World {
         this.cash -= BINDER_TOPUP_COST; this.supply.topUpBinder(BINDER_TOPUP_TONNES);
         this.updateEconomy(); this.hud.setStatus(`Binder truck top-up: +${BINDER_TOPUP_TONNES} t for ${fmtMoney(BINDER_TOPUP_COST)}.`);
       },
+      onToggleSound: () => { this.soundOn = !this.soundOn; this.sound.setMuted(!this.soundOn); this.sound.toggleAmbient(this.soundOn); this.hud.setSoundIcon(this.soundOn); },
+      onHelp: () => this.showEconomyHelp(),
     });
     this.updateEconomy();
     this.refreshObjective();
@@ -166,6 +172,26 @@ export class World {
     (window as any).__world = this;
     if (typeof location !== "undefined" && location.hash === "#autorun") setTimeout(() => this.debugAutoRun(), 400);
     if (typeof location !== "undefined" && location.hash === "#smartrun") setTimeout(() => this.debugSmartRun(), 400);
+  }
+
+  /** A dismissible card explaining how the money loop works. */
+  private showEconomyHelp() {
+    if (this.root.querySelector(".econHelp")) return;
+    const el = document.createElement("div");
+    el.className = "whResult econHelp";
+    el.innerHTML = `<div class="introCard">
+      <div class="rsHead">💰 How the operation pays</div>
+      <ol class="introSteps">
+        <li><b>Ore → cash.</b> The headframe hoists ore to the <b>⚙ Mill</b>, which refines it to concentrate — your <b>steady daily income</b>. No mill, no money.</li>
+        <li><b>Milling makes tailings.</b> Only about <b>half</b> can go back underground as backfill; the rest is forced to the <b>⛰ TSF</b>. If the dam fills, the mill chokes — <b>raise the dam</b> (click it) to keep earning.</li>
+        <li><b>Backfill needs three feeds.</b> Every pour draws <b>tailings + water + binder</b> at once; whichever runs dry throttles the pour. Binder arrives by <b>🚆 rail</b> (and costs money); water is <b>💧 pumped</b> to the pond.</li>
+        <li><b>Filling stopes is the profit.</b> Each completed pour unlocks the next ore lift — worth far more than the paste costs.</li>
+        <li><b>The mine runs dry.</b> The orebody is finite (watch the <b>Orebody</b> bar) — income tapers late-campaign, so fill while the ore lasts.</li>
+      </ol>
+      <button class="pBtn primary" id="econClose"><b>Got it ▶</b></button>
+    </div>`;
+    this.root.appendChild(el);
+    el.querySelector("#econClose")!.addEventListener("click", () => el.remove());
   }
 
   private maybeShowIntro() {
@@ -326,7 +352,7 @@ export class World {
         s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, frictionScale(this.recipeFor(s).solids));
         if (s.pressureMpa > s.cls.ratingMpa) {
           this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
-          this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY;
+          this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY; this.sound.burst();
           this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
           continue;
         }
@@ -352,10 +378,10 @@ export class World {
       if (s.placedM3 >= s.volumeM3) {
         this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
         this.underground.completePour(s, this.day);
-        this.cash += fillRevenue(s.volumeM3);
+        this.cash += fillRevenue(s.volumeM3); this.sound.cash();
         this.hud.setStatus(`${s.id} ${fill.label} complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);
         if (s.barricadeRisk && Math.abs(Math.sin(s.depthM * 12.9 + s.volumeM3)) > 0.5) {
-          this.safetyIncidents++; this.cash -= 900_000;
+          this.safetyIncidents++; this.cash -= 900_000; this.sound.burst();
           this.hud.setStatus(`⚠ ${s.id} barricade seepage on fill — spill contained, but geotech was right (−${fmtMoney(900_000)}).`);
         }
       }
@@ -384,6 +410,7 @@ export class World {
       const achieved = ucs28Kpa(this.recipeFor(s)) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
       s.ucsAchievedKpa = Math.round(achieved);
       s.ucsPass = achieved >= s.targetUcsKpa;
+      s.ucsPass ? this.sound.pass() : this.sound.fail();
       this.hud.setStatus(`${s.id} 28-day cylinder ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa — ${s.ucsPass ? "PASS ✓" : "FAIL ✗ (geotech won't sign the hand-back)"}.`);
     }
     this.updateEconomy();
@@ -408,7 +435,7 @@ export class World {
     else if (this.day >= 24 && !this.firedEvents.has("mill-trip")) this.fireEvent(this.evMillTrip());
   }
   private fireEvent(ev: GameEvent) {
-    this.activeEvent = ev; this.firedEvents.add(ev.id); this.paused = true; this.refreshClock();
+    this.activeEvent = ev; this.firedEvents.add(ev.id); this.paused = true; this.refreshClock(); this.sound.event();
     this.hud.showEvent(`<div class="rsHead">⚠ ${ev.title}</div><p class="evBody">${ev.body}</p><div class="evOpts">${ev.options.map((o, i) => `<button class="optBtn" data-act="ev:${i}"><b>${o.label}</b><span>${o.detail}</span></button>`).join("")}</div>`);
   }
   private resolveEvent(i: number) {
@@ -534,6 +561,10 @@ export class World {
   // ---- pointer --------------------------------------------------------------
 
   private onPointer(pi: { type: number; event: { button?: number } }) {
+    if (pi.type === PointerEventTypes.POINTERDOWN) { // unlock + start ambience on first gesture
+      this.sound.resume();
+      if (this.soundOn && !this.ambientStarted) { this.ambientStarted = true; this.sound.toggleAmbient(true); }
+    }
     if (this.mode === "plant") { this.plantInterior.handlePointer(pi); return; }
     if (this.mode === "underground") {
       if (pi.type === PointerEventTypes.POINTERTAP && pi.event.button !== 2) {
@@ -628,6 +659,7 @@ export class World {
     this.recomputePower();
     this.refreshSupply();
     this.refreshObjective();
+    this.sound.build();
     this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
   }
@@ -905,7 +937,7 @@ export class World {
     if (!b.spec.tsfCap || b.raises >= TSF_MAX_RAISES) return false;
     const cost = tsfRaiseCost(b.raises);
     if (this.cash < cost) { if (fromPanel) this.hud.setStatus(`Not enough cash to raise the dam (${fmtMoney(cost)}).`); return false; }
-    this.cash -= cost;
+    this.cash -= cost; this.sound.damRaise();
     b.raises++;
     b.root.scaling.y = 1 + b.raises * 0.22; // upstream lift — the dam grows upward
     this.refreshSupply();
@@ -1107,6 +1139,7 @@ export class World {
     } else if (act === "pour") {
       if (st.status === "piped" && (!st.signBarricade || !st.signPourNote)) { this.hud.setStatus("Sign the barricade and issue the pour note before pouring."); return; }
       if (!this.underground.startPour(st)) return;
+      this.sound.pourStart();
       if (!st.signLowStart) st.plugDrift = 0.25; // skipped the low-solids start — a plug head-start
       this.renderStopePanel();
       this.hud.setStatus(`${st.id} pour started${st.signLowStart ? "" : " without a low-solids start — mind the plug"}. Keep the flow in the band.`);
