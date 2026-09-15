@@ -38,6 +38,7 @@ import { Hud } from "./hud.js";
 import { SoundKit } from "./sound.js";
 import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES } from "./supplyChain.js";
 import { SCENARIOS, type Scenario } from "./scenarios.js";
+import { loadCompany, saveCompany, legacyForGrade, hasPerk } from "./company.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
@@ -92,6 +93,7 @@ export class World {
   private sound = new SoundKit();
   private rp = 0;                        // research points — the operation's accumulated know-how
   private research = new Set<string>();  // unlocked tech ids
+  private opexMult = 1;                  // company-perk running-cost modifier
   private soundOn = true;
   private ambientStarted = false;
   private supply = new SupplyChain();
@@ -119,9 +121,13 @@ export class World {
 
   start() {
     this.root.classList.add("world-mode");
-    this.cash = this.scenario.startCash;
-    this.supply.oreReserve.level = this.scenario.orebody;
-    this.supply.oreReserve.cap = this.scenario.orebody;
+    const co = loadCompany(); // permanent perks from past campaigns
+    this.cash = Math.round(this.scenario.startCash * (hasPerk(co, "seed") ? 1.15 : 1));
+    this.rp = hasPerk(co, "veterans") ? 8 : 0;
+    this.opexMult = hasPerk(co, "lean") ? 0.92 : 1;
+    const orebody = this.scenario.orebody + (hasPerk(co, "prospect") ? 30_000 : 0);
+    this.supply.oreReserve.level = orebody;
+    this.supply.oreReserve.cap = orebody;
     this.canvas = document.createElement("canvas");
     this.canvas.id = "renderCanvas";
     this.root.appendChild(this.canvas);
@@ -446,7 +452,7 @@ export class World {
     this.millDayIncome = dd > 0 ? revenue / dd : 0; // $/day for the HUD readout
     if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
     const ev = this.underground.updateSchedule(this.day);
-    this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * dd;             // daily running cost
+    this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * this.opexMult * dd; // daily running cost
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
     // 7-day early cylinder — the course's mid-cure warning that a recipe is short
@@ -598,6 +604,9 @@ export class World {
     const steps = this.safetyIncidents >= 4 ? 3 : this.safetyIncidents >= 2 ? 2 : this.safetyIncidents === 1 ? 1 : 0;
     const grade = order[Math.min(order.length - 1, baseGi + steps)];
     this.lastGrade = grade;
+    // bank legacy points into the persistent company
+    const earned = legacyForGrade(grade);
+    const co = loadCompany(); co.legacy += earned; saveCompany(co);
     this.hud.showResult(`
       <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
       <div class="rsGrade grade-${grade}">${grade}</div>
@@ -607,8 +616,9 @@ export class World {
         <div><span>Orebody extracted</span><b>${Math.round(minedFrac * 100)}%</b></div>
         <div><span>Cash</span><b>${fmtMoney(this.cash)}</b></div>
         <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " incident" + (this.safetyIncidents > 1 ? "s" : "") : "clean"}</b></div>
+        <div><span>Company legacy</span><b>+${earned} → ${co.legacy}</b></div>
       </div>
-      <button class="pBtn primary" data-act="restart"><b>Run again</b></button>`);
+      <button class="pBtn primary" data-act="restart"><b>New campaign</b></button>`);
   }
 
   // ---- pointer --------------------------------------------------------------

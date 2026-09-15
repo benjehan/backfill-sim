@@ -516,6 +516,19 @@ select, input[type=number] {
 .scDiff.hard { background: #6b3030; color: #f0cccc; }
 .scBlurb { color: var(--muted); font-size: 13px; line-height: 1.5; min-height: 56px; }
 .scStats { font-size: 11px; color: #8fb89e; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.hqPanel { margin-top: 26px; background: rgba(20,32,42,.6); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; text-align: left; }
+.hqHead { font-size: 16px; font-weight: 700; color: #dfe8ef; }
+.hqLegacy { float: right; color: #f0a83a; }
+.hqSub { font-size: 11px; color: var(--muted); margin: 4px 0 12px; }
+.hqPerks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.hqPerk { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.hqPerk.owned { opacity: .6; }
+.hqPerk div { flex: 1; }
+.hqPerk b { display: block; font-size: 13px; color: var(--fg); }
+.hqPerk span { font-size: 11px; color: var(--muted); }
+.hqBuy { flex: 0 0 auto; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 6px 12px; font-weight: 700; }
+.hqBuy.on { background: #2f6b45; border-color: #39d98a; color: #cdeed9; cursor: pointer; }
+.hqOwned { color: #7be0a6; font-size: 12px; flex: 0 0 auto; }
 
 /* research lab panel */
 .techRp { float: right; color: #7be0a6; font-size: 13px; }
