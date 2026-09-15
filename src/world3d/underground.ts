@@ -12,6 +12,7 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
 import { CURE_DAYS, type PipeClass } from "./backfillModel.js";
 import { Reticulation, BOOST_FLOW } from "./reticulation.js";
+import { SCENARIOS, type Scenario } from "./scenarios.js";
 
 export type StopeStatus = "locked" | "available" | "piped" | "pouring" | "curing" | "cured";
 
@@ -64,17 +65,7 @@ export interface StopeUG {
 }
 
 const UNIT_M = 7.5;
-const LEVELS = [
-  { depthM: 150, y: -18 },
-  { depthM: 300, y: -36 },
-  { depthM: 450, y: -54 },
-];
-// per-stope schedule (availableDay, dueDay), staggered by depth
-const SCHEDULE = [
-  { a: 1, d: 12 }, { a: 4, d: 18 },   // -150
-  { a: 8, d: 26 }, { a: 12, d: 32 },  // -300
-  { a: 18, d: 42 }, { a: 24, d: 50 }, // -450
-];
+const LEVELS = [{ y: -18 }, { y: -36 }, { y: -54 }]; // stylised cutaway Y per level (real depth is per-scenario)
 const STATUS_COLOR: Record<StopeStatus, string> = {
   locked: "#363b42", available: "#6b7076", piped: "#7d93a8", pouring: "#96793f", curing: "#b5822f", cured: "#d3a63a",
 };
@@ -93,10 +84,10 @@ export class Underground {
   readonly net: Reticulation;
   private selected: StopeUG | null = null;
 
-  constructor(private scene: Scene, private shadow: ShadowGenerator) {
+  constructor(private scene: Scene, private shadow: ShadowGenerator, private scenario: Scenario = SCENARIOS[0]) {
     this.root = new TransformNode("underground", scene);
     this.build();
-    this.net = new Reticulation(scene, this.root, shadow);
+    this.net = new Reticulation(scene, this.root, shadow, scenario.depths);
     this.root.setEnabled(false);
   }
 
@@ -117,7 +108,9 @@ export class Underground {
     const trunk = MeshBuilder.CreateCylinder("trunk", { diameter: 1.3, height: 60, tessellation: 10 }, this.scene);
     trunk.material = steel; trunk.position.set(1.8, -28, 0); trunk.parent = this.root;
 
-    for (const lv of LEVELS) {
+    const sc = this.scenario;
+    for (let levelIdx = 0; levelIdx < LEVELS.length; levelIdx++) {
+      const lv = { depthM: sc.depths[levelIdx], y: LEVELS[levelIdx].y }; // real depth (scenario), stylised Y
       const dr = MeshBuilder.CreateBox("drive" + lv.depthM, { width: 62, height: 6, depth: 6 }, this.scene);
       dr.material = drive; dr.position.set(34, lv.y, 0); dr.parent = this.root;
       const tag = MeshBuilder.CreateBox("tag" + lv.depthM, { width: 2, height: 5, depth: 6.2 }, this.scene);
@@ -142,13 +135,13 @@ export class Underground {
         fill.position.set(sx, floorY, 15); // y re-set each paint so it grows up from the floor
         fill.scaling.y = 0.0001; fill.parent = this.root; fill.setEnabled(false);
         this.shadow.addShadowCaster(fill);
-        const isPrimary = sx === 32; const levelIdx = LEVELS.indexOf(lv);
+        const isPrimary = sx === 32;
         this.stopes.push({
           id: "", mesh: chamber, fillMesh: fill, floorY, chamberH: CH_H, depthM: lv.depthM, lengthM: lv.depthM + sx * UNIT_M,
-          volumeM3: 6000 + sx * 55 + lv.depthM * 3.5, placedM3: 0,
+          volumeM3: sc.vol.base + sx * sc.vol.sx + lv.depthM * sc.vol.depth, placedM3: 0,
           availableDay: 1, dueDay: 12, status: "locked", cls: null, choke: false, lineBoost: 1, cureStartDay: 0, pipes: [],
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
-          targetUcsKpa: 500 + levelIdx * 120 + (isPrimary ? 180 : 0), // primaries carry higher strength targets
+          targetUcsKpa: sc.ucs.base + levelIdx * sc.ucs.perLevel + (isPrimary ? sc.ucs.primary : 0), // primaries carry higher targets
           ucsAchievedKpa: 0, ucsPass: null,
           isPrimary, levelIdx, fillType: "paste",
         });
@@ -156,7 +149,7 @@ export class Underground {
     }
     this.stopes.forEach((s, i) => {
       s.id = `S${i + 1}`; s.mesh.metadata = { stopeId: s.id };
-      s.availableDay = SCHEDULE[i].a; s.dueDay = SCHEDULE[i].d;
+      s.availableDay = sc.schedule[i].a; s.dueDay = sc.schedule[i].d;
     });
   }
 

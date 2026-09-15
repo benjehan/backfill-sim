@@ -1,4 +1,5 @@
 import { World } from "./world3d/world.js";
+import { SCENARIOS } from "./world3d/scenarios.js";
 
 // Passcode gate. We store only a SHA-256 hash of the code, never the plaintext.
 // This is light protection (obscures a static site from casual visitors) — it is
@@ -18,9 +19,32 @@ function startGame() {
   started = true;
   const root = document.getElementById("app")!;
   root.classList.remove("locked");
-  const gate = document.getElementById("gate");
-  if (gate) gate.remove();
-  new World(root).start();
+  document.getElementById("gate")?.remove();
+  // headless test hooks boot the default mine straight away (no select screen to click)
+  if (location.hash.startsWith("#autorun") || location.hash.startsWith("#smartrun")) {
+    new World(root, location.hash.endsWith("2") ? SCENARIOS[1] : SCENARIOS[0]).start(); return;
+  }
+  showScenarioSelect(root);
+}
+
+function showScenarioSelect(root: HTMLElement) {
+  const el = document.createElement("div");
+  el.className = "scenarioSelect";
+  el.innerHTML = `<div class="scWrap">
+    <div class="scTitle">BACKFILL <span>TYCOON</span></div>
+    <div class="scSub">Choose your operation</div>
+    <div class="scCards">${SCENARIOS.map((s, i) => `
+      <button class="scCard" data-i="${i}">
+        <div class="scName">${s.name}</div>
+        <div class="scDiff ${s.difficulty.toLowerCase()}">${s.difficulty}</div>
+        <div class="scBlurb">${s.blurb}</div>
+        <div class="scStats">$${Math.round(s.startCash / 1e6)}m budget · ${s.horizonDays} days · levels ${s.depths.join(" / ")} m</div>
+      </button>`).join("")}</div>
+  </div>`;
+  root.appendChild(el);
+  el.querySelectorAll<HTMLElement>("[data-i]").forEach((b) => b.addEventListener("click", () => {
+    const s = SCENARIOS[+b.dataset.i!]; el.remove(); new World(root, s).start();
+  }));
 }
 
 async function tryUnlock(code: string): Promise<boolean> {

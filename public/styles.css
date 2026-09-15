@@ -500,6 +500,23 @@ select, input[type=number] {
   font-size: 13px; color: #dff3e6; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
 .whObjective b { color: #7be0a6; }
 
+/* scenario select screen */
+.scenarioSelect { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 30%, #1a2733, #0b131b 70%); }
+.scWrap { text-align: center; max-width: 900px; padding: 24px; }
+.scTitle { font-size: 40px; font-weight: 800; letter-spacing: 2px; color: #dfe8ef; }
+.scTitle span { color: #f0a83a; }
+.scSub { color: var(--muted); margin: 6px 0 26px; text-transform: uppercase; letter-spacing: 3px; font-size: 13px; }
+.scCards { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+.scCard { width: 340px; text-align: left; background: rgba(20,32,42,.9); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px 20px; cursor: pointer; transition: transform .12s, border-color .12s; color: var(--fg); }
+.scCard:hover { transform: translateY(-4px); border-color: #39d98a; }
+.scName { font-size: 22px; font-weight: 700; }
+.scDiff { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 2px 8px; border-radius: 6px; margin: 8px 0; background: #2f6b45; color: #cdeed9; }
+.scDiff.hard { background: #6b3030; color: #f0cccc; }
+.scBlurb { color: var(--muted); font-size: 13px; line-height: 1.5; min-height: 56px; }
+.scStats { font-size: 11px; color: #8fb89e; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+
 /* research lab panel */
 .techRp { float: right; color: #7be0a6; font-size: 13px; }
 .techList { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }

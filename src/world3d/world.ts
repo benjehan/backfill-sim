@@ -31,12 +31,13 @@ import {
 import {
   fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
   pourPressureMpa, BURST_PENALTY,
-  SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, HORIZON_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
+  SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
   BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
 import { SoundKit } from "./sound.js";
-import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES, ORE_RESERVE_START } from "./supplyChain.js";
+import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES } from "./supplyChain.js";
+import { SCENARIOS, type Scenario } from "./scenarios.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
@@ -114,10 +115,13 @@ export class World {
   private ghostPos: Vector3 | null = null;
   private ghostValid = false;
 
-  constructor(private root: HTMLElement) {}
+  constructor(private root: HTMLElement, private scenario: Scenario = SCENARIOS[0]) {}
 
   start() {
     this.root.classList.add("world-mode");
+    this.cash = this.scenario.startCash;
+    this.supply.oreReserve.level = this.scenario.orebody;
+    this.supply.oreReserve.cap = this.scenario.orebody;
     this.canvas = document.createElement("canvas");
     this.canvas.id = "renderCanvas";
     this.root.appendChild(this.canvas);
@@ -130,7 +134,7 @@ export class World {
     this.setupLights();
 
     this.surfaceRoot = new TransformNode("surface", this.scene);
-    this.ground = createTerrain(this.scene); this.ground.parent = this.surfaceRoot;
+    this.ground = createTerrain(this.scene, this.scenario.terrain); this.ground.parent = this.surfaceRoot;
     this.portal = this.createPortal();
     this.crew = new WorkerCrew(
       this.scene, 5, PAD_RADIUS - 6, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot,
@@ -140,7 +144,7 @@ export class World {
       ],
     );
     this.fleet = new TruckFleet(this.scene, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
-    this.underground = new Underground(this.scene, this.shadow);
+    this.underground = new Underground(this.scene, this.shadow, this.scenario);
     this.plantInterior = new PlantInterior(
       this.scene, this.shadow, this.root,
       () => this.exitPlant(),
@@ -166,6 +170,7 @@ export class World {
       onHelp: () => this.showEconomyHelp(),
       onResearch: () => this.showResearch(),
     });
+    this.hud.setMine(this.scenario.name);
     this.updateEconomy();
     this.refreshObjective();
     this.underground.updateSchedule(this.day);
@@ -182,8 +187,8 @@ export class World {
     });
     window.addEventListener("resize", () => this.engine.resize());
     (window as any).__world = this;
-    if (typeof location !== "undefined" && location.hash === "#autorun") setTimeout(() => this.debugAutoRun(), 400);
-    if (typeof location !== "undefined" && location.hash === "#smartrun") setTimeout(() => this.debugSmartRun(), 400);
+    if (typeof location !== "undefined" && location.hash.startsWith("#autorun")) setTimeout(() => this.debugAutoRun(), 400);
+    if (typeof location !== "undefined" && location.hash.startsWith("#smartrun")) setTimeout(() => this.debugSmartRun(), 400);
   }
 
   /** Research lab: spend RP on permanent campaign perks. */
@@ -468,7 +473,7 @@ export class World {
     else if (this.mode === "underground" && this.selectedStope?.status === "pouring") this.renderStopePanel();
 
     this.maybeFireEvent();
-    if (this.day >= HORIZON_DAY || this.underground.counts().cured === this.underground.stopes.length) this.endCampaign();
+    if (this.day >= this.scenario.horizonDays || this.underground.counts().cured === this.underground.stopes.length) this.endCampaign();
   }
 
   private pourMult() { return this.day < this.tempPourUntil ? this.tempPourMult : 1; }
@@ -570,7 +575,7 @@ export class World {
   }
 
   private refreshClock() { this.hud.setClock(this.day, this.paused, this.speedIdx, SPEEDS); }
-  private refreshSchedule() { this.hud.setSchedule(this.underground.counts(), this.day, HORIZON_DAY); }
+  private refreshSchedule() { this.hud.setSchedule(this.underground.counts(), this.day, this.scenario.horizonDays); }
 
   private endCampaign() {
     if (this.ended) return;
@@ -580,12 +585,12 @@ export class World {
     const cured = stopes.filter((s) => s.status === "cured").length;
     const passed = stopes.filter((s) => s.status === "cured" && s.ucsPass).length; // cured AND hit strength
     const onTime = stopes.filter((s) => s.status === "cured" && s.cureStartDay <= s.dueDay).length;
-    const minedFrac = 1 - this.supply.oreReserve.level / ORE_RESERVE_START; // how much of the orebody was monetised
+    const minedFrac = 1 - this.supply.oreReserve.level / this.scenario.orebody; // how much of the orebody was monetised
     let score = 0;
     score += passed === total ? 3 : passed >= total - 1 ? 2 : passed >= total / 2 ? 1 : 0;
     score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
     score += this.cash > 0 ? 2 : 0;
-    score += this.cash > START_CASH * 0.3 ? 1 : 0;
+    score += this.cash > this.scenario.startCash * 0.3 ? 1 : 0;
     score += minedFrac > 0.8 ? 1 : 0; // reward extracting the resource before the horizon
     const order = ["S", "A", "B", "C", "D"];
     const baseGi = order.indexOf(score >= 8 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D");
@@ -1348,7 +1353,7 @@ export class World {
         if (guard % 4 === 0) L(`day ${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${this.underground.counts().cured} tsf=${Math.round(this.supply.tsf.level / 1000)}k/${Math.round(this.supply.tsf.cap / 1000)}k safety=${this.safetyIncidents}`);
       }
       const c = this.underground.counts();
-      const mined = Math.round((1 - this.supply.oreReserve.level / ORE_RESERVE_START) * 100);
+      const mined = Math.round((1 - this.supply.oreReserve.level / this.scenario.orebody) * 100);
       L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}% rp=${Math.floor(this.rp)} GRADE=${this.lastGrade}`);
       L("DONE");
     } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }

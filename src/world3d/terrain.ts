@@ -31,14 +31,13 @@ function mix(a: Color3, b: Color3, t: number): Color3 {
   return new Color3(lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t));
 }
 
-const C_GRAVEL = Color3.FromHexString("#8f8578"); // graded build pad
-const C_DIRT = Color3.FromHexString("#7c6b4c");   // haul apron / disturbed ground
-const C_SCRUB = Color3.FromHexString("#6f8a4e");  // near scrub
-const C_HILLS = Color3.FromHexString("#516d3c");  // greener distant hills
-const C_ROCK = Color3.FromHexString("#948a7a");   // exposed rock on high faces
+export interface TerrainTheme { gravel: string; dirt: string; scrub: string; hills: string; rock: string; }
+const DEFAULT_THEME: TerrainTheme = { gravel: "#8f8578", dirt: "#7c6b4c", scrub: "#6f8a4e", hills: "#516d3c", rock: "#948a7a" };
 
 /** Ground colour at (x,z,h) — banded by distance from site, tinted rockier up high. */
-function groundColor(x: number, z: number, h: number): Color3 {
+function groundColor(x: number, z: number, h: number, t: TerrainTheme): Color3 {
+  const C_GRAVEL = Color3.FromHexString(t.gravel), C_DIRT = Color3.FromHexString(t.dirt);
+  const C_SCRUB = Color3.FromHexString(t.scrub), C_HILLS = Color3.FromHexString(t.hills), C_ROCK = Color3.FromHexString(t.rock);
   const d = Math.hypot(x, z);
   let c: Color3;
   if (d < PAD_RADIUS) c = C_GRAVEL;
@@ -51,7 +50,7 @@ function groundColor(x: number, z: number, h: number): Color3 {
   return mix(c, new Color3(c.r * 0.9, c.g * 0.9, c.b * 0.9), (n + 1) * 0.12);
 }
 
-export function createTerrain(scene: Scene): Mesh {
+export function createTerrain(scene: Scene, theme: TerrainTheme = DEFAULT_THEME): Mesh {
   const ground = MeshBuilder.CreateGround(
     "terrain",
     { width: TERRAIN_SIZE, height: TERRAIN_SIZE, subdivisions: 72 },
@@ -69,7 +68,7 @@ export function createTerrain(scene: Scene): Mesh {
   const p2 = ground.getVerticesData("position")!;
   const colors = new Float32Array((p2.length / 3) * 4);
   for (let v = 0, i = 0; i < p2.length; i += 3, v += 4) {
-    const c = groundColor(p2[i], p2[i + 1], p2[i + 2]);
+    const c = groundColor(p2[i], p2[i + 1], p2[i + 2], theme);
     colors[v] = c.r; colors[v + 1] = c.g; colors[v + 2] = c.b; colors[v + 3] = 1;
   }
   ground.setVerticesData(VertexBuffer.ColorKind, colors);

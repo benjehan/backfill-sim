@@ -17,7 +17,7 @@ import {
   type PipeClass,
 } from "./backfillModel.js";
 
-const DEPTHS = [150, 300, 450];        // level depths (m)
+const DEFAULT_DEPTHS = [150, 300, 450]; // level depths (m) — overridden per scenario
 const BORE_LEN = 150;                  // each borehole leg (m)
 const RUN_LEN = 300;                   // level run (m)
 const BRANCH_LEN = 120;                // stope branch (m)
@@ -48,31 +48,36 @@ export class Reticulation {
   private byId = new Map<string, Segment>();
   private flowBeads = new Map<number, Mesh[]>();
 
-  constructor(private scene: Scene, private root: TransformNode, shadow: ShadowGenerator) {
+  private depths: number[];
+  constructor(private scene: Scene, private root: TransformNode, shadow: ShadowGenerator, depths: number[] = DEFAULT_DEPTHS) {
+    this.depths = depths;
+    const DEPTHS = depths; // local alias for the geometry below (real depths drive head + friction)
     const add = (s: Omit<Segment, "mesh">, mesh: Mesh) => {
       mesh.parent = root; mesh.metadata = { segId: s.id }; shadow.addShadowCaster(mesh);
       const seg = { ...s, mesh } as Segment; this.segs.push(seg); this.byId.set(s.id, seg);
     };
     const cyl = (name: string, dia: number, h: number) => MeshBuilder.CreateCylinder(name, { diameter: dia, height: h, tessellation: 8 }, this.scene);
 
-    // borehole legs down the shaft (chunky trunk main)
+    // borehole legs down the shaft (chunky trunk main). Visual Y is stylised (LEVEL_Y);
+    // lengthM/cumLenM use REAL depths so deeper mines carry more head + friction.
     for (let i = 0; i < 3; i++) {
       const top = i === 0 ? 0 : LEVEL_Y[i - 1];
       const m = cyl("B" + (i + 1), 1.7, Math.abs(LEVEL_Y[i] - top));
       m.position.set(2.4, (top + LEVEL_Y[i]) / 2, 0);
-      add({ id: "B" + (i + 1), kind: "borehole", label: `Borehole ${i === 0 ? "surface" : DEPTHS[i - 1] + "m"}→${DEPTHS[i]}m`, levelIdx: i, lengthM: BORE_LEN, cumLenM: BORE_LEN * (i + 1), choke: false, booster: false, classId: null, built: false }, m);
+      const legLen = DEPTHS[i] - (i > 0 ? DEPTHS[i - 1] : 0);
+      add({ id: "B" + (i + 1), kind: "borehole", label: `Borehole ${i === 0 ? "surface" : DEPTHS[i - 1] + "m"}→${DEPTHS[i]}m`, levelIdx: i, lengthM: legLen, cumLenM: DEPTHS[i], choke: false, booster: false, classId: null, built: false }, m);
     }
     // level runs (drive-level distribution pipe)
     for (let i = 0; i < 3; i++) {
       const m = cyl("R" + (i + 1), 1.35, 58); m.rotation.z = Math.PI / 2; m.position.set(31, LEVEL_Y[i] + 2.4, 0);
-      add({ id: "R" + (i + 1), kind: "level", label: `Level ${DEPTHS[i]}m run`, levelIdx: i, lengthM: RUN_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN, choke: false, booster: false, classId: null, built: false }, m);
+      add({ id: "R" + (i + 1), kind: "level", label: `Level ${DEPTHS[i]}m run`, levelIdx: i, lengthM: RUN_LEN, cumLenM: DEPTHS[i] + RUN_LEN, choke: false, booster: false, classId: null, built: false }, m);
     }
     // stope branches (two per level, at x = 32 and 56)
     let n = 1;
     for (let i = 0; i < 3; i++) {
       for (const sx of [32, 56]) {
         const m = cyl("Br" + n, 1.15, 15); m.rotation.x = Math.PI / 2; m.position.set(sx, LEVEL_Y[i] + 2.4, 8);
-        add({ id: "Br" + n, kind: "branch", label: `Branch to S${n}`, levelIdx: i, lengthM: BRANCH_LEN, cumLenM: BORE_LEN * (i + 1) + RUN_LEN + BRANCH_LEN, choke: false, booster: false, classId: null, built: false }, m);
+        add({ id: "Br" + n, kind: "branch", label: `Branch to S${n}`, levelIdx: i, lengthM: BRANCH_LEN, cumLenM: DEPTHS[i] + RUN_LEN + BRANCH_LEN, choke: false, booster: false, classId: null, built: false }, m);
         n++;
       }
     }
@@ -116,7 +121,7 @@ export class Reticulation {
     return c;
   }
   effHeadMpa(levelIdx: number): number {
-    return staticHeadMpa(DEPTHS[levelIdx]) * Math.pow(CHOKE_HEAD_RELIEF, this.chokeCount(levelIdx));
+    return staticHeadMpa(this.depths[levelIdx]) * Math.pow(CHOKE_HEAD_RELIEF, this.chokeCount(levelIdx));
   }
   /** True if a booster upstream on this leg's path re-pressurises it (leg + downstream hold the extra). */
   private boostedUpstream(seg: Segment): boolean {
@@ -132,7 +137,7 @@ export class Reticulation {
     const boost = this.boostedUpstream(seg) ? BOOST_PRESSURE : 0;
     if (seg.id.startsWith("DB")) {
       const db = this.byId.get("DB" + seg.id.replace(/^DBr?/, ""))!; // the drilled hole for this leg
-      const head = staticHeadMpa(DEPTHS[seg.levelIdx]) * (db.choke ? CHOKE_HEAD_RELIEF : 1);
+      const head = staticHeadMpa(this.depths[seg.levelIdx]) * (db.choke ? CHOKE_HEAD_RELIEF : 1);
       return head + frictionMpa(seg.cumLenM) + SURGE_MPA + boost;
     }
     return this.effHeadMpa(seg.levelIdx) + frictionMpa(seg.cumLenM) + SURGE_MPA + boost;
