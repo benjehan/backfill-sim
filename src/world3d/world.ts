@@ -55,6 +55,21 @@ const TECHS: { id: string; name: string; desc: string; cost: number }[] = [
 ];
 const SPEEDS = [1, 2, 4, 8];
 
+// Barricade / containment design (GDD 09/10). Capacity is what the barricade can
+// hold before it fails; the pour's rate of rise loads it until the plug sets and
+// isolates it. Mullock is cheap but weak & variable; arched shotcrete is stronger
+// and more forgiving. Relief (breather holes) is the key anti-inrush control.
+const BARRICADE = {
+  mullock:   { label: "Mullock (waste)", short: "Mullock", capKpa: 300, cost: 250_000, note: "Consolidated waste — cheap, material on hand, but weak and variable. Pour the plug slowly or it fails." },
+  shotcrete: { label: "Arched shotcrete", short: "Shotcrete", capKpa: 560, cost: 650_000, note: "Engineered arch — strong, fast, QA/QC-able. Forgiving on rate of rise. Higher cost; can't sit at a drift intersection." },
+  reliefBonusKpa: 240, reliefCost: 200_000,
+  exclusionCost: 160_000, instrCost: 130_000,
+} as const;
+const INRUSH_PENALTY = 1_800_000;
+const BAR_RISE_K = 360;   // kPa per unit flow-factor while the plug is unset
+const BAR_HEAD_K = 220;   // kPa fluid head, scaled by fill fraction, pre-plug-set
+const PLUG_SET_FRAC = 0.12; // the plug is placed over the first ~12% of fill
+
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
 interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
@@ -446,6 +461,31 @@ export class World {
       }
       s.placedM3 += delta;
       this.cash -= recipeCostPerM3(this.recipeFor(s)) * fill.costMult * delta;
+
+      // Barricade loading (GDD 09): the rate of rise loads the barricade until the
+      // plug sets and isolates it. Pour the plug too fast and it fails — inrush.
+      const bfrac = s.placedM3 / s.volumeM3;
+      s.plugSet = Math.min(1, bfrac / PLUG_SET_FRAC);
+      const preSet = 1 - s.plugSet;
+      const fluidMult = fill.reticulated ? 1 : 0.35; // trucked CAF exerts little fluid head
+      s.barricadeKpa = (BAR_RISE_K * s.flowFactor + BAR_HEAD_K * bfrac) * preSet * fluidMult;
+      const cap = this.barricadeCap(s);
+      // grace: the barricade tolerates a brief overload — ease the flow and it recovers
+      if (cap > 0 && s.barricadeKpa > cap) s.barricadeOver += dd;
+      else s.barricadeOver = Math.max(0, s.barricadeOver - dd * 2);
+      if (cap > 0 && s.barricadeOver > 0.05) {
+        this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
+        this.underground.inrush(s); this.sound.burst();
+        if (s.exclusionZone) {
+          this.cash -= INRUSH_PENALTY * 0.4;
+          this.hud.setStatus(`⚠ ${s.id} INRUSH — barricade failed, but the exclusion zone contained it (no injuries). Rebuild & re-pour (−${fmtMoney(INRUSH_PENALTY * 0.4)}).`);
+        } else {
+          this.cash -= INRUSH_PENALTY; this.safetyIncidents++;
+          this.hud.setStatus(`⚠ ${s.id} INRUSH — barricade failed and paste ran into the drive. Safety incident. Rebuild & re-pour (−${fmtMoney(INRUSH_PENALTY)}).`);
+        }
+        continue;
+      }
+
       if (s.placedM3 >= s.volumeM3) {
         this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
         this.underground.completePour(s, this.day);
@@ -913,6 +953,18 @@ export class World {
   private anyPourActive() { return this.underground.stopes.some((s) => s.status === "pouring"); }
   private cafPourActive() { return this.underground.stopes.some((s) => s.status === "pouring" && !FILL_TYPES[s.fillType].reticulated); }
 
+  /** Barricade capacity (kPa it can hold) from its type + optional relief. */
+  private barricadeCap(s: StopeUG): number {
+    if (!s.barricadeType) return 0;
+    return BARRICADE[s.barricadeType].capKpa + (s.barricadeRelief ? BARRICADE.reliefBonusKpa : 0);
+  }
+  /** Up-front cost of the designed barricade (type + relief + exclusion + instrumentation). */
+  private barricadeCost(s: StopeUG): number {
+    if (!s.barricadeType) return 0;
+    return BARRICADE[s.barricadeType].cost + (s.barricadeRelief ? BARRICADE.reliefCost : 0)
+      + (s.exclusionZone ? BARRICADE.exclusionCost : 0) + (s.barricadeInstr ? BARRICADE.instrCost : 0);
+  }
+
   /** Cut a flat gravel bench into the sloping terrain under an off-pad structure. */
   private gradePlatform(at: Vector3, fw: number, fd: number) {
     const pad = MeshBuilder.CreateBox("gradePad", { width: fw + 8, height: 9, depth: fd + 8 }, this.scene);
@@ -1080,7 +1132,7 @@ export class World {
       { text: `You're stood up! Press <b>▶</b> in the clock (top-left) to start time running.`, done: () => this.day > 1.15 },
       { text: `Now head below — click <b>⛏ Go underground</b>.`, done: () => this.mode === "underground" },
       { text: `Click a <b>ready stope</b> (green outline). Set a pipe <b>class</b> on each leg so it out-rates the pressure it holds, then <b>Build reticulation</b>.`, done: () => stopeAt("piped", "pouring", "curing", "cured") },
-      { text: `Sign the barricade & pour note, then <b>Begin pour</b>. Keep the flow in the band — flush if a plug builds and pressure climbs.`, done: () => stopeAt("pouring", "curing", "cured") },
+      { text: `Design the <b>barricade</b> (type + relief), issue the pour note, then <b>Begin pour</b>. Keep flow low until the plug sets or the barricade inrushes; then keep it in the band and flush a forming plug.`, done: () => stopeAt("pouring", "curing", "cured") },
       { text: `That's the whole loop: fill stopes before they're due, keep the mill fed and the TSF from filling, tune your mix in the 🧪 Lab, and answer to the board. You've got it from here — good luck!`, done: () => false },
     ];
   }
@@ -1389,19 +1441,31 @@ export class World {
         <div class="segList">${rows}</div>
         <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : aggBlock ? "PAF needs a Crusher plant on the surface" : "set a valid class on every leg"}</span></button>`;
     } else if (st.status === "piped") {
-      const cost = fillCost(st.volumeM3), rev = fillRevenue(st.volumeM3);
+      const rev = fillRevenue(st.volumeM3);
       const chk = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="sign:${key}">${on ? "☑" : "☐"} ${label}</button>`;
-      const ready = st.signBarricade && st.signPourNote;
+      const bt = st.barricadeType;
+      const cap = this.barricadeCap(st);
+      const barCost = this.barricadeCost(st);
+      const barBtn = (key: "mullock" | "shotcrete") => { const spec = BARRICADE[key]; return `<button class="fillBtn ${bt === key ? "on" : ""}" data-act="bar:${key}" title="${spec.note.replace(/"/g, "&quot;")}">${spec.short}<br><small>${spec.capKpa} kPa</small></button>`; };
+      const tog = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="bartog:${key}">${on ? "☑" : "☐"} ${label}</button>`;
+      const ready = !!bt && !!st.signPourNote;
       body = `
         <div class="pRow">${ft.reticulated ? "Reticulated · <b>" + (st.cls?.name ?? "") + "</b>" + (st.choke ? " + choke" : "") : "Trucked (CAF) · ready to place"}</div>
         ${ft.reticulated ? this.hglChart(idx) : ""}
-        <div class="pNote">Pre-pour sign-off — skip an item and it bites later:</div>
+        <div class="pNote">Design the barricade — it holds the fluid paste until the plug cures. Rate of rise loads it during the pour; overpressure = <b>inrush</b>.</div>
+        <div class="fillPick">${barBtn("mullock")}${barBtn("shotcrete")}</div>
+        ${bt ? `<div class="pSplit"><span>Capacity</span><b>${cap} kPa</b></div>` : `<div class="pNote pWarnNote">⚠ Pick a barricade type before pouring.</div>`}
         <div class="chkList">
-          ${chk("Barricade", !!st.signBarricade, "Barricade built &amp; signed off")}
+          ${tog("relief", !!st.barricadeRelief, `Pressure relief / breather (+${fmtMoney(BARRICADE.reliefCost)} · +${BARRICADE.reliefBonusKpa} kPa)`)}
+          ${tog("excl", !!st.exclusionZone, `Exclusion zone (+${fmtMoney(BARRICADE.exclusionCost)} · contains a failure)`)}
+          ${tog("instr", !!st.barricadeInstr, `Barricade instrumentation (+${fmtMoney(BARRICADE.instrCost)} · live gauge)`)}
+        </div>
+        <div class="pNote">Pre-pour sign-off:</div>
+        <div class="chkList">
           ${chk("PourNote", !!st.signPourNote, "Pour note issued &amp; approved")}
           ${chk("LowStart", !!st.signLowStart, "Low-solids line start")}
         </div>
-        <button class="pBtn primary" data-act="pour" ${ready ? "" : "disabled"}><b>Begin pour</b><span>${ready ? `paste ${fmtMoney(cost)} → ${fmtMoney(rev)} ore access` : "sign the barricade & pour note first"}</span></button>`;
+        <button class="pBtn primary" data-act="pour" ${ready ? "" : "disabled"}><b>Begin pour</b><span>${ready ? `barricade ${fmtMoney(barCost)} → ${fmtMoney(rev)} ore access` : "design the barricade &amp; issue the pour note"}</span></button>`;
     } else if (st.status === "pouring") {
       const pct = Math.round((st.placedM3 / st.volumeM3) * 100);
       const rating = st.cls?.ratingMpa ?? 1;
@@ -1412,6 +1476,17 @@ export class World {
       const plugCls = st.plugDrift > 0.5 ? "red" : st.plugDrift > 0.25 ? "amber" : "green";
       const fr = st.placedM3 / st.volumeM3;
       const phase = fr < 0.08 ? "① Plug pour — sealing the barricade" : fr > 0.92 ? "③ Cap pour — working surface" : "② Main pour";
+      const bcap = this.barricadeCap(st);
+      const bpct = Math.min(100, bcap > 0 ? (st.barricadeKpa / bcap) * 100 : 0);
+      const bmargin = bcap > 0 ? 1 - st.barricadeKpa / bcap : 1;
+      const bcls = bmargin < 0.12 ? "red" : bmargin < 0.3 ? "amber" : "green";
+      const plugTxt2 = st.plugSet >= 1 ? "plug set — barricade isolated, safe to ramp" : "plug sealing — keep flow low";
+      const barBlock = st.barricadeInstr
+        ? `<div class="pSplit"><span>Barricade (${st.barricadeType === "shotcrete" ? "AS" : "mullock"})</span><b class="${bcls === "red" ? "pLate" : ""}">${Math.round(st.barricadeKpa)} / ${bcap} kPa</b></div>
+           <div class="pBar"><div class="pBarFill ${bcls}" style="width:${bpct}%"></div></div>
+           <div class="pRow muted">${plugTxt2}</div>`
+        : `<div class="pSplit"><span>Barricade</span><b class="${bcls === "red" ? "pLate" : ""}">${bcls === "red" ? "DANGER — ease flow" : bcls === "amber" ? "loading" : "holding"}</b></div>
+           <div class="pRow muted">${plugTxt2} · no instrumentation — flying blind</div>`;
       body = `
         <div class="pRow"><b class="cap">${phase}</b></div>
         <div class="pRow">Pouring · <b>${st.cls?.name ?? FILL_TYPES[st.fillType].short}</b>${st.cls ? " · rating " + rating + " MPa" : ""}</div>
@@ -1421,6 +1496,7 @@ export class World {
           <span class="pFlow"><button class="pMini" data-act="flow-down">−</button><button class="pMini" data-act="flow-up">+</button></span></div>
         <div class="pSplit"><span><span class="plugDot ${plugCls}"></span>Plug: ${plugTxt}</span>
           <button class="pBtn sm" data-act="flush">💧 Flush</button></div>
+        ${barBlock}
         <div class="pBar"><div class="pBarFill" style="width:${pct}%"></div></div>
         <div class="pRow muted">${Math.round(st.placedM3).toLocaleString()} / ${st.volumeM3.toLocaleString()} m³ (${pct}%)</div>
         <div class="pNote">Run too slow and the paste settles into a plug (pressure climbs); push too hard and friction spikes. Keep it in the band, flush a forming plug, or burst the line.</div>`;
@@ -1484,6 +1560,19 @@ export class World {
       else if (k === "LowStart") st.signLowStart = !st.signLowStart;
       this.renderStopePanel(); return;
     }
+    if (act.startsWith("bar:")) {
+      if (st.status !== "piped") return;
+      st.barricadeType = act.slice(4) as "mullock" | "shotcrete";
+      this.renderStopePanel(); return;
+    }
+    if (act.startsWith("bartog:")) {
+      if (st.status !== "piped") return;
+      const k = act.slice(7);
+      if (k === "relief") st.barricadeRelief = !st.barricadeRelief;
+      else if (k === "excl") st.exclusionZone = !st.exclusionZone;
+      else if (k === "instr") st.barricadeInstr = !st.barricadeInstr;
+      this.renderStopePanel(); return;
+    }
     if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
     if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
     if (act.startsWith("drill:")) { this.underground.net.toggleDrill(+act.slice(6)); this.underground.net.highlightPath(+act.slice(6)); this.renderStopePanel(); return; }
@@ -1500,12 +1589,17 @@ export class World {
       this.cash -= res.cost; this.updateEconomy(); this.renderStopePanel();
       this.hud.setStatus(`${st.id} reticulation built — weakest leg ${res.cls.name}${res.choke ? " (choked)" : ""}, ${fmtMoney(res.cost)}.`);
     } else if (act === "pour") {
-      if (st.status === "piped" && (!st.signBarricade || !st.signPourNote)) { this.hud.setStatus("Sign the barricade and issue the pour note before pouring."); return; }
+      if (st.status === "piped") {
+        if (!st.barricadeType || !st.signPourNote) { this.hud.setStatus("Design the barricade and issue the pour note before pouring."); return; }
+        const barCost = this.barricadeCost(st);
+        if (this.cash < barCost) { this.hud.setStatus(`Not enough cash to build the barricade (${fmtMoney(barCost)}).`); return; }
+        this.cash -= barCost; this.updateEconomy();
+      }
       if (!this.underground.startPour(st)) return;
       this.sound.pourStart();
       if (!st.signLowStart) st.plugDrift = 0.25; // skipped the low-solids start — a plug head-start
       this.renderStopePanel();
-      this.hud.setStatus(`${st.id} pour started${st.signLowStart ? "" : " without a low-solids start — mind the plug"}. Keep the flow in the band.`);
+      this.hud.setStatus(`${st.id} pour started${st.signLowStart ? "" : " without a low-solids start — mind the plug"}. Keep flow low until the plug sets.`);
     } else if (act === "flow-up") {
       if (st.status === "pouring") { st.flowFactor = Math.min(1.6, st.flowFactor + 0.15); this.renderStopePanel(); }
     } else if (act === "flow-down") {
@@ -1541,7 +1635,7 @@ export class World {
     this.debugAdvance(2); this.checkTutorial(); L("pressed play");
     this.descend(); L("descended");
     this.smartReticulate(0); this.checkTutorial(); L("reticulated S1");
-    const s0 = this.underground.stopes[0]; s0.signBarricade = s0.signPourNote = true; this.underground.startPour(s0); this.checkTutorial(); L("poured S1");
+    const s0 = this.underground.stopes[0]; s0.signBarricade = s0.signPourNote = true; s0.barricadeType = "shotcrete"; s0.barricadeRelief = true; this.underground.startPour(s0); this.checkTutorial(); L("poured S1");
   }
   /** Build a partial campaign and leave it autosaved (for save/resume testing). */
   debugSeed() {
@@ -1549,7 +1643,7 @@ export class World {
     this.debugBuildPlantLine(); this.debugUpgrade("mill"); this.descend();
     for (let k = 0; k < 8 && !this.ended; k++) {
       this.underground.stopes.forEach((s, i) => { if (s.status === "available") { try { this.smartReticulate(i); } catch { /* not yet */ } } });
-      if (!this.underground.stopes.some((s) => s.status === "pouring")) { const n = this.underground.stopes.find((s) => s.status === "piped"); if (n) { n.signBarricade = n.signPourNote = n.signLowStart = true; this.underground.startPour(n); } }
+      if (!this.underground.stopes.some((s) => s.status === "pouring")) { const n = this.underground.stopes.find((s) => s.status === "piped"); if (n) { n.signBarricade = n.signPourNote = n.signLowStart = true; n.barricadeType = "shotcrete"; n.barricadeRelief = true; this.underground.startPour(n); } }
       this.debugAdvance(2);
     }
     this.saveGame();
@@ -1560,7 +1654,7 @@ export class World {
     this.plantInterior.debugBuildLine();                 // places + wires the line, solves, reports capacity
     this.plantInterior.setSupply(this.interiorSupply()); // schematic gating; plantThroughput stays = capacity
   }
-  debugPour(i: number) { this.underground.startPour(this.underground.stopes[i]); }
+  debugPour(i: number) { const s = this.underground.stopes[i]; s.barricadeType = "shotcrete"; s.barricadeRelief = true; s.barricadeInstr = true; this.underground.startPour(s); }
   debugSelect(i: number) { this.selectStope(this.underground.stopes[i]); }
   debugAdvance(days: number) { this.paused = false; const step = 0.25; for (let d = 0; d < days && !this.ended; d += step) this.advanceTime((SECONDS_PER_DAY * step) / this.speed); }
 
@@ -1620,7 +1714,7 @@ export class World {
         // sooner, and unlocks its secondary earlier — beats splitting the feed across parallel pours
         if (!this.underground.stopes.some((s) => s.status === "pouring")) {
           const next = this.underground.stopes.find((s) => s.status === "piped");
-          if (next) { next.signBarricade = true; next.signPourNote = true; next.signLowStart = true; this.underground.startPour(next); }
+          if (next) { next.signBarricade = true; next.signPourNote = true; next.signLowStart = true; next.barricadeType = "shotcrete"; next.barricadeRelief = true; this.underground.startPour(next); }
         }
         // raise the dam before the TSF chokes the mill
         if (this.supply.tsf.cap > 0 && this.supply.tsf.level > this.supply.tsf.cap * 0.88) { const tsf = this.buildings.find((b) => b.spec.tsfCap); if (tsf) this.raiseDamOn(tsf, false); }

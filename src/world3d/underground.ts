@@ -57,6 +57,14 @@ export interface StopeUG {
   levelIdx: number;
   fillType: string;
   barricadeRisk?: boolean;
+  // barricade design (containment — GDD 09/10): type + optional relief/exclusion/instrumentation
+  barricadeType?: "mullock" | "shotcrete";
+  barricadeRelief?: boolean;   // breather / crown pressure relief — the anti-inrush control
+  exclusionZone?: boolean;     // sized to the fluid-paste volume — contains a failure (no injuries)
+  barricadeInstr?: boolean;    // TEPC pressure cells — live barricade gauge + early warning
+  barricadeKpa: number;        // live barricade pressure during the pour
+  barricadeOver: number;       // accumulated game-days over capacity (grace before it fails)
+  plugSet: number;             // 0..1 — plug curing/isolating the barricade from main-pour load
   // pre-pour sign-off
   signBarricade?: boolean;
   signPourNote?: boolean;
@@ -144,7 +152,7 @@ export class Underground {
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
           targetUcsKpa: sc.ucs.base + levelIdx * sc.ucs.perLevel + (isPrimary ? sc.ucs.primary : 0), // primaries carry higher targets
           ucsAchievedKpa: 0, ucsPass: null,
-          isPrimary, levelIdx, fillType: "paste",
+          isPrimary, levelIdx, fillType: "paste", barricadeKpa: 0, barricadeOver: 0, plugSet: 0,
         });
       }
     }
@@ -162,6 +170,8 @@ export class Underground {
       signBarricade: !!s.signBarricade, signPourNote: !!s.signPourNote, signLowStart: !!s.signLowStart,
       clsId: s.cls?.id ?? null, choke: s.choke, lineBoost: s.lineBoost, lengthM: s.lengthM,
       barricadeRisk: !!s.barricadeRisk, recipe: s.recipe ?? null,
+      barricadeType: s.barricadeType ?? null, barricadeRelief: !!s.barricadeRelief,
+      exclusionZone: !!s.exclusionZone, barricadeInstr: !!s.barricadeInstr,
     }));
   }
   applyStopes(data: any[], day: number) {
@@ -172,6 +182,8 @@ export class Underground {
       s.signBarricade = d.signBarricade; s.signPourNote = d.signPourNote; s.signLowStart = d.signLowStart;
       s.cls = d.clsId == null ? null : PIPE_CLASSES[d.clsId]; s.choke = d.choke; s.lineBoost = d.lineBoost;
       s.lengthM = d.lengthM; s.barricadeRisk = d.barricadeRisk; s.recipe = d.recipe ?? undefined;
+      s.barricadeType = d.barricadeType ?? undefined; s.barricadeRelief = d.barricadeRelief;
+      s.exclusionZone = d.exclusionZone; s.barricadeInstr = d.barricadeInstr;
       this.paint(s, day);
     });
   }
@@ -281,6 +293,7 @@ export class Underground {
     if (stope.status !== "piped") return false;
     stope.status = "pouring"; stope.placedM3 = 0;
     stope.flowFactor = 1; stope.pressureMpa = 0; stope.plugDrift = 0;
+    stope.barricadeKpa = 0; stope.barricadeOver = 0; stope.plugSet = 0;
     this.paint(stope, 0);
     return true;
   }
@@ -306,6 +319,18 @@ export class Underground {
   burst(stope: StopeUG) {
     stope.status = "piped"; stope.placedM3 = 0;
     stope.pressureMpa = 0; stope.plugDrift = 0; stope.flowFactor = 1;
+    stope.barricadeKpa = 0; stope.barricadeOver = 0; stope.plugSet = 0;
+    this.paint(stope, 0);
+  }
+
+  /** Inrush — the barricade failed under load. Pour aborts; the barricade is
+   *  destroyed and must be rebuilt (reticulation survives). Re-pour required. */
+  inrush(stope: StopeUG) {
+    stope.status = "piped"; stope.placedM3 = 0;
+    stope.pressureMpa = 0; stope.plugDrift = 0; stope.flowFactor = 1;
+    stope.barricadeKpa = 0; stope.barricadeOver = 0; stope.plugSet = 0;
+    stope.barricadeType = undefined;          // barricade gone — rebuild before re-pouring
+    stope.signPourNote = false; stope.signLowStart = false;
     this.paint(stope, 0);
   }
 }
