@@ -119,6 +119,7 @@ export class World {
   private ambientStarted = false;
   private supply = new SupplyChain();
   private millDayIncome = 0;
+  private lastWaterReused = 0; // m³/day of process water recovered by dewatering (HUD)
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
@@ -505,7 +506,8 @@ export class World {
 
     // surface materials economy: hoist ore, mill it (concentrate income + tailings), route to TSF, deliver binder, pump water
     const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1);
-    const sup = this.supply.tick(dd, this.supplyState(), deliveryMult);
+    const sup = this.supply.tick(dd, this.supplyState(), deliveryMult, this.plantThroughput > 0 ? 0.6 : 0);
+    this.lastWaterReused = dd > 0 ? sup.waterReused / dd : 0; // m³/day recovered, for the HUD
     const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1);
     const modeCostMult = this.activeBinderMode()?.costMult ?? 1; // haulage/isotainer cost more per tonne
     const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult;
@@ -1077,7 +1079,7 @@ export class World {
   private updateEconomy() {
     this.hud.setEconomy(this.cash, this.powered, this.total);
     this.hud.setBinder(this.supply.binder.level, this.supply.binder.cap);
-    this.hud.setResources({ reserve: this.supply.oreReserve, ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome });
+    this.hud.setResources({ reserve: this.supply.oreReserve, ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome, reuse: this.lastWaterReused });
     this.updateTsfVisuals();
   }
   /** Raise each TSF's tailings surface to match the site fill fraction. */

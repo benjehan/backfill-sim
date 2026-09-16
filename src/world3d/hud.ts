@@ -197,7 +197,7 @@ export class Hud {
   private incomeEl?: HTMLElement;
   setResources(r: {
     reserve: { level: number; cap: number }; ore: { level: number; cap: number }; tailings: { level: number; cap: number };
-    water: { level: number; cap: number }; tsf: { level: number; cap: number }; income: number;
+    water: { level: number; cap: number }; tsf: { level: number; cap: number }; income: number; reuse?: number;
   }) {
     this.incomeEl ??= this.rootEl.querySelector("#whIncome") as HTMLElement;
     if (this.incomeEl) { this.incomeEl.textContent = `${fmtMoney(r.income)}/day`; this.incomeEl.classList.toggle("bad", r.income <= 0); }
@@ -211,11 +211,12 @@ export class Hud {
       const val = s.cap > 0 ? `${Math.round(s.level).toLocaleString()} ${unit}` : "— none —";
       return `<div class="resRow"><span class="resL">${label}</span><div class="resTrack"><div class="resFill ${tone}" style="width:${pct}%"></div></div><b class="resV">${val}</b></div>`;
     };
+    const reuse = (r.reuse ?? 0) > 1 ? `<div class="resReuse">♻ reusing ${Math.round(r.reuse!).toLocaleString()} m³/day process water</div>` : "";
     this.resEl.innerHTML =
       bar("Orebody", "t", r.reserve) +
       bar("Ore (ROM)", "t", r.ore) +
       bar("Tailings buf", "t", r.tailings) +
-      bar("Water pond", "m³", r.water) +
+      bar("Water pond", "m³", r.water) + reuse +
       bar("TSF", "t", r.tsf, true);
   }
 

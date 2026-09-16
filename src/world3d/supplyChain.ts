@@ -36,6 +36,13 @@ export const BINDER_COST_PER_T = 190;      // delivered rail binder cost ($/t)
 export const TAILINGS_T_PER_M3 = 1.35;     // dry tailings tonnes per m³ paste
 export const WATER_M3_PER_M3 = 0.34;       // process water per m³ paste
 
+// Only the correctly-graded fraction of the mill tailings suits paste (enough
+// fines/PSD); the rest is a reject stream that goes to the TSF (the ~50% rule).
+export const PASTE_SUITABLE_FRAC = 0.6;    // graded paste-feed stream fraction of milled tailings
+// Dewatering (thickener/filter) squeezes process water out of the paste feed and
+// returns it to the pond for reuse — cutting raw-water make-up (course water balance).
+export const WATER_RECOVER_PER_T = 0.22;   // m³ recovered per tonne of paste-feed tailings dewatered
+
 // Starting stocks: enough to make the first pour, but the chain must be built to sustain it.
 export const START_BINDER_T = 1_000;
 export const START_WATER_M3 = 22_000;
@@ -59,6 +66,9 @@ export interface DayResult {
   revenue: number;    // concentrate sales this tick
   binderCost: number; // cost of binder delivered this tick
   toTsf: number;      // tailings deposited to the TSF this tick
+  pasteStreamT: number; // graded paste-feed tailings produced this tick
+  rejectStreamT: number; // reject/fines tailings sent to the TSF this tick
+  waterReused: number; // process water recovered by dewatering this tick (m³)
   notes: string[];    // player-facing supply warnings
 }
 
@@ -73,9 +83,10 @@ export class SupplyChain {
   tsf: Stock = { level: 0, cap: 0 };
 
   /** One game-day tick of the surface economy: hoist, mill, route tailings, deliver binder, pump water. */
-  tick(dd: number, b: SupplyBuildings, binderDeliveryMult: number): DayResult {
+  tick(dd: number, b: SupplyBuildings, binderDeliveryMult: number, dewaterEff = 0): DayResult {
     const notes: string[] = [];
     this.tsf.cap = b.tsfCap;
+    let pasteStreamT = 0, rejectStreamT = 0, waterReused = 0;
 
     // Hoist ore to the ROM pad, drawing down the finite orebody (mill upgrades lift the hoist too).
     const hoist = Math.min(MINE_HOIST_TPD * b.millMult * dd, this.oreReserve.level, this.ore.cap - this.ore.level);
@@ -97,13 +108,18 @@ export class SupplyChain {
         notes.push(this.tsf.cap <= 0 ? "⚠ No TSF — nowhere for tailings, mill choked. Build a TSF."
           : "⚠ TSF full — mill throttled. Raise the dam or build another TSF.");
       }
-      // Route: the plant buffer takes what it can hold; the excess is forced to the TSF.
-      // Over a campaign the plant reuses only part of the tailings (void < production),
-      // so the bulk still lands in the TSF — the ~50% rule emerges instead of being imposed.
-      const toBuffer = Math.min(tail, bufFree);
+      // The mill throws two streams: a graded PASTE-FEED stream (suits backfill) and a
+      // REJECT/fines stream. Only the paste feed competes for the plant buffer; the
+      // unbuffered paste feed + all reject go to the TSF — the ~50% rule, made explicit.
+      pasteStreamT = tail * PASTE_SUITABLE_FRAC;
+      rejectStreamT = tail - pasteStreamT;
+      const toBuffer = Math.min(pasteStreamT, bufFree);
       this.tailings.level += toBuffer;
-      toTsf = tail - toBuffer;
+      toTsf = (pasteStreamT - toBuffer) + rejectStreamT;
       this.tsf.level = Math.min(this.tsf.cap, this.tsf.level + toTsf);
+      // Dewater the buffered paste feed → recover process water back to the pond.
+      waterReused = toBuffer * WATER_RECOVER_PER_T * dewaterEff;
+      if (waterReused > 0) this.water.level = Math.min(this.water.cap, this.water.level + waterReused);
       this.ore.level -= want;
       milled = want;
       revenue = milled * MILL_NET_PER_T;
@@ -129,7 +145,7 @@ export class SupplyChain {
     const waterIn = (b.water ? WATER_PUMP_M3_PER_DAY * b.waterMult : 0) + b.waterInflow;
     if (waterIn > 0) this.water.level = Math.min(this.water.cap, this.water.level + waterIn * dd);
 
-    return { milledT: milled, revenue, binderCost, toTsf, notes };
+    return { milledT: milled, revenue, binderCost, toTsf, pasteStreamT, rejectStreamT, waterReused, notes };
   }
 
   /** Draw materials for `m3Want` of fill. Returns the m³ actually supplied (throttled by the scarcest stock). */
