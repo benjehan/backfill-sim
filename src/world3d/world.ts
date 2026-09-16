@@ -399,6 +399,7 @@ export class World {
   private exitPlant() {
     this.mode = "surface";
     this.plantInterior.exit();
+    this.checkTutorial(); // the plant-line step completes on exit
     this.surfaceRoot.setEnabled(true);
     this.setSky(false);
     this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
@@ -1129,6 +1130,7 @@ export class World {
       { text: `Only ~half the tailings can go back underground. Build a <b>⛰ Tailings dam</b> for the rest, or the mill chokes.`, done: () => has("tsf") },
       { text: `Cement is delivered by rail. Build a <b>🚆 Rail terminal</b>.`, done: () => has("rail") },
       { text: `The paste mix needs water — build a <b>💧 Water pump</b>. Watch each work links to the plant: a <b>red line</b> means it's too far to connect.`, done: () => has("waterpump") },
+      { text: `The plant is an empty shell — it makes <b>no paste yet</b>. Click the <b>🏭 Backfill plant</b> → <b>Enter plant</b>, then build the process line: place a <b>thickener</b>, a <b>filter</b>, a <b>twin-shaft mixer</b> and a <b>pump</b>, and wire each output to the next input (tailings + water + binder → mixer → pump → shaft). You can't pour paste until the plant produces it.`, done: () => this.plantThroughput > 0 },
       { text: `You're stood up! Press <b>▶</b> in the clock (top-left) to start time running.`, done: () => this.day > 1.15 },
       { text: `Now head below — click <b>⛏ Go underground</b>.`, done: () => this.mode === "underground" },
       { text: `Click a <b>ready stope</b> (green outline). Set a pipe <b>class</b> on each leg so it out-rates the pressure it holds, then <b>Build reticulation</b>.`, done: () => stopeAt("piped", "pouring", "curing", "cured") },
@@ -1448,9 +1450,11 @@ export class World {
       const barCost = this.barricadeCost(st);
       const barBtn = (key: "mullock" | "shotcrete") => { const spec = BARRICADE[key]; return `<button class="fillBtn ${bt === key ? "on" : ""}" data-act="bar:${key}" title="${spec.note.replace(/"/g, "&quot;")}">${spec.short}<br><small>${spec.capKpa} kPa</small></button>`; };
       const tog = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="bartog:${key}">${on ? "☑" : "☐"} ${label}</button>`;
-      const ready = !!bt && !!st.signPourNote;
+      const plantReady = !ft.reticulated || this.plantThroughput > 0;
+      const ready = !!bt && !!st.signPourNote && plantReady;
       body = `
         <div class="pRow">${ft.reticulated ? "Reticulated · <b>" + (st.cls?.name ?? "") + "</b>" + (st.choke ? " + choke" : "") : "Trucked (CAF) · ready to place"}</div>
+        ${ft.reticulated && !plantReady ? `<div class="pWarn">⚠ The plant isn't making paste. Enter the 🏭 Backfill plant and connect tailings + water + binder → mixer → pump before you can pour.</div>` : ""}
         ${ft.reticulated ? this.hglChart(idx) : ""}
         <div class="pNote">Design the barricade — it holds the fluid paste until the plug cures. Rate of rise loads it during the pour; overpressure = <b>inrush</b>.</div>
         <div class="fillPick">${barBtn("mullock")}${barBtn("shotcrete")}</div>
@@ -1590,6 +1594,7 @@ export class World {
       this.hud.setStatus(`${st.id} reticulation built — weakest leg ${res.cls.name}${res.choke ? " (choked)" : ""}, ${fmtMoney(res.cost)}.`);
     } else if (act === "pour") {
       if (st.status === "piped") {
+        if (FILL_TYPES[st.fillType].reticulated && this.plantThroughput <= 0) { this.hud.setStatus("No paste yet — the plant isn't making any. Click the 🏭 Backfill plant → Enter plant and connect tailings + water + binder → mixer → pump."); return; }
         if (!st.barricadeType || !st.signPourNote) { this.hud.setStatus("Design the barricade and issue the pour note before pouring."); return; }
         const barCost = this.barricadeCost(st);
         if (this.cash < barCost) { this.hud.setStatus(`Not enough cash to build the barricade (${fmtMoney(barCost)}).`); return; }
@@ -1632,6 +1637,7 @@ export class World {
     const L = (s: string) => console.log("TUT|" + s + ` step=${this.tutStep + 1}/${this.tutSteps.length}`);
     L("start");
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) { this.debugBuild(t, x, z); L(`built ${t}`); }
+    this.debugBuildPlantLine(); this.checkTutorial(); L("plant line built");
     this.debugAdvance(2); this.checkTutorial(); L("pressed play");
     this.descend(); L("descended");
     this.smartReticulate(0); this.checkTutorial(); L("reticulated S1");
