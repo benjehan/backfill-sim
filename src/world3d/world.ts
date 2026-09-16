@@ -70,6 +70,8 @@ const BAR_RISE_K = 360;   // kPa per unit flow-factor while the plug is unset
 const BAR_HEAD_K = 220;   // kPa fluid head, scaled by fill fraction, pre-plug-set
 const PLUG_SET_FRAC = 0.12; // the plug is placed over the first ~12% of fill
 const SURFACE_UNIT_M = 7.5; // world units → metres for the surface pipe run (plant → shaft)
+const TESTWORK_COST = 4_000_000; // a lab test-work campaign (characterisation + rheology + UCS)
+const TESTWORK_DAYS = 4;         // results lag reality — the program takes time
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
@@ -107,6 +109,7 @@ export class World {
   private ended = false;
   private opexPerDay = 0;
   private safetyIncidents = 0;
+  private testWorkDone = false; // a paid lab campaign that de-risks mix design (tightens UCS scatter)
   private lastGrade = "";
   private sound = new SoundKit();
   private rp = 0;                        // research points — the operation's accumulated know-how
@@ -519,13 +522,13 @@ export class World {
     for (const s of this.underground.stopes) {
       if (s.status === "curing" && !s.ucs7Reported && this.day - s.cureStartDay >= this.underground.cureDaysFor(s) * 0.5) {
         s.ucs7Reported = true;
-        const ucs7 = ucs28Kpa(this.recipeFor(s)) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult * 0.6;
+        const ucs7 = ucs28Kpa(this.recipeFor(s)) * this.ucsRealised(s) * FILL_TYPES[s.fillType].ucsMult * 0.6;
         s.ucs7Kpa = Math.round(ucs7);
         this.hud.setStatus(`${s.id} 7-day cylinder ${s.ucs7Kpa} kPa — ${ucs7 >= s.targetUcsKpa * 0.6 ? "on track" : "LOW, 28-day may fail"}.`);
       }
     }
     for (const s of ev.newlyCured) {
-      const achieved = ucs28Kpa(this.recipeFor(s)) * ucsVariance(s.depthM + s.dueDay) * FILL_TYPES[s.fillType].ucsMult;
+      const achieved = ucs28Kpa(this.recipeFor(s)) * this.ucsRealised(s) * FILL_TYPES[s.fillType].ucsMult;
       s.ucsAchievedKpa = Math.round(achieved);
       s.ucsPass = achieved >= s.targetUcsKpa;
       this.rp += 3; // a handed-back stope teaches the crew
@@ -670,12 +673,19 @@ export class World {
     const target = st ? st.targetUcsKpa : Math.max(...this.underground.stopes.map((s) => s.targetUcsKpa));
     const strengthOk = ucs >= target;
     const forWho = st ? `for ${st.id}` : "default mix";
+    const minl = this.scenario.mineralogy;
+    const twBlock = this.testWorkDone
+      ? `<div class="labRow"><span class="good">✓ verified</span><small>test-work done — tight UCS scatter, safe to trim binder</small></div>
+         ${minl ? `<div class="pNote">Material: <b>${minl.label}</b> — ${minl.note}</div>` : ""}`
+      : `<div class="pWarn">⚠ No test-work — the true rheology/UCS curve is unknown. Cylinders scatter widely; over-binder to be safe.</div>
+         <button class="pBtn primary" data-act="testwork"><b>Commission test-work (${fmtMoney(TESTWORK_COST)})</b><span>reveals the real UCS curve &amp; mineralogy; cuts scatter so you can trim binder · +${TESTWORK_DAYS} days</span></button>`;
     return `<div class="labFor">Tuning: <b>${forWho}</b></div>` + `
       <div class="labRow"><span>${yieldStressPa(r.solids).toFixed(0)} Pa</span><small>yield stress</small></div>
       <div class="labRow"><span>${frictionKpaPerM(r.solids).toFixed(1)} kPa/m</span><small>friction gradient</small></div>
-      <div class="labRow"><span class="${strengthOk ? "good" : "bad"}">${ucs.toFixed(0)} kPa</span><small>predicted 28-day UCS (need ${target})</small></div>
+      <div class="labRow"><span class="${strengthOk ? "good" : "bad"}">${ucs.toFixed(0)} kPa${this.testWorkDone ? "" : " ±?"}</span><small>predicted 28-day UCS (need ${target})</small></div>
       <div class="labRow"><span>$${recipeCostPerM3(r).toFixed(1)}/m³</span><small>paste cost</small></div>
-      <div class="labLight ${pump.level}">Pumpability: ${pump.label}</div>`;
+      <div class="labLight ${pump.level}">Pumpability: ${pump.label}</div>
+      ${twBlock}`;
   }
 
   private refreshClock() { this.hud.setClock(this.day, this.paused, this.speedIdx, SPEEDS); }
@@ -726,7 +736,7 @@ export class World {
       v: SAVE_VERSION, scenario: this.scenario.id, savedAt: Math.floor(this.day),
       day: this.day, speedIdx: this.speedIdx, cash: this.cash, opexPerDay: this.opexPerDay,
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
-      safetyIncidents: this.safetyIncidents, firedEvents: [...this.firedEvents],
+      safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
       plantThroughput: this.plantThroughput,
@@ -760,7 +770,7 @@ export class World {
     // scalar state
     this.day = s.day; this.speedIdx = s.speedIdx ?? 1; this.cash = s.cash; this.opexPerDay = s.opexPerDay;
     this.rp = s.rp || 0; this.research = new Set(s.research || []); this.opexMult = s.opexMult ?? 1;
-    this.safetyIncidents = s.safetyIncidents || 0; this.firedEvents = new Set(s.firedEvents || []);
+    this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
     this.tempDeliveryMult = s.tempDeliveryMult ?? 1; this.tempDeliveryUntil = s.tempDeliveryUntil ?? 0;
     this.tempPourMult = s.tempPourMult ?? 1; this.tempPourUntil = s.tempPourUntil ?? 0;
     this.plantThroughput = s.plantThroughput ?? this.plantThroughput;
@@ -955,6 +965,18 @@ export class World {
 
   private anyPourActive() { return this.underground.stopes.some((s) => s.status === "pouring"); }
   private cafPourActive() { return this.underground.stopes.some((s) => s.status === "pouring" && !FILL_TYPES[s.fillType].reticulated); }
+
+  /** Realised UCS factor for a stope's pour: base scatter, widened hugely if no
+   *  test-work has been done, plus the scenario's mineralogy risk (sulphide late
+   *  strength loss / clay variability). Test-work tightens scatter and halves the
+   *  mineralogy penalty — the course's "verify the design basis, then trim binder". */
+  private ucsRealised(s: StopeUG): number {
+    let v = ucsVariance(s.depthM + s.dueDay);
+    const minl = this.scenario.mineralogy;
+    if (!this.testWorkDone) v = 1 + (v - 1) * 2.5 - (minl?.varianceAdd ?? 0); // untested → wide, risky scatter
+    const latePen = (minl?.latePenalty ?? 0) * (this.testWorkDone ? 0.4 : 1);
+    return Math.max(0.4, v * (1 - latePen));
+  }
 
   /** Barricade capacity (kPa it can hold) from its type + optional relief. */
   private barricadeCap(s: StopeUG): number {
@@ -1572,6 +1594,15 @@ export class World {
     if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
     if (act === "closebuilding") { this.deselectBuilding(); return; }
     if (act === "raisedam") { this.raiseDam(); return; }
+    if (act === "testwork") {
+      if (this.testWorkDone) return;
+      if (this.cash < TESTWORK_COST) { this.hud.setStatus(`Not enough cash for a test-work campaign (${fmtMoney(TESTWORK_COST)}).`); return; }
+      this.cash -= TESTWORK_COST; this.testWorkDone = true; this.day += TESTWORK_DAYS;
+      this.updateEconomy(); this.hud.setLabReadout(this.labReadout()); this.saveGame();
+      const minl = this.scenario.mineralogy;
+      this.hud.setStatus(`Test-work complete — design basis verified${minl ? ` (${minl.label})` : ""}. UCS scatter tightens; trim binder with confidence.`);
+      return;
+    }
     if (act === "upgrade") { this.upgradeBuilding(); return; }
     const st = this.selectedStope;
     if (act === "close") { this.underground.select(null); this.underground.net.highlightPath(null); this.selectedStope = null; this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`); return; }
@@ -1665,6 +1696,7 @@ export class World {
   debugUpgrade(type: string) { const b = this.buildings.find((x) => x.spec.type === type); if (b) { this.selectedBuilding = b; this.upgradeBuilding(); this.selectedBuilding = null; } }
   /** Drive the tutorial through every step to verify the gating advances. */
   debugTutTest() {
+    this.testWorkDone = true;
     const L = (s: string) => console.log("TUT|" + s + ` step=${this.tutStep + 1}/${this.tutSteps.length}`);
     L("start");
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) { this.debugBuild(t, x, z); L(`built ${t}`); }
@@ -1676,6 +1708,7 @@ export class World {
   }
   /** Build a partial campaign and leave it autosaved (for save/resume testing). */
   debugSeed() {
+    this.testWorkDone = true;
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
     this.debugBuildPlantLine(); this.debugUpgrade("mill"); this.descend();
     for (let k = 0; k < 8 && !this.ended; k++) {
@@ -1698,6 +1731,7 @@ export class World {
   /** Headless self-play: stand up the chain, then reticulate + pour every stope as it frees up,
    *  logging the economy each week. Drives the REAL game loop (not a projection). #autorun triggers it. */
   debugAutoRun() {
+    this.testWorkDone = true;
     const L = (s: string) => console.log("AUTORUN|" + s);
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
@@ -1736,6 +1770,7 @@ export class World {
   /** Headless SKILLED self-play: pumpable-yet-strong mix, over-rated uniform lines with chokes,
    *  reinforce on geotech, raise the dam before it chokes the mill. Proves the game rewards skill. */
   debugSmartRun() {
+    this.testWorkDone = true;
     const L = (s: string) => console.log("SMARTRUN|" + s);
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);

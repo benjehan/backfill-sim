@@ -130,7 +130,7 @@ export class Hud {
     });
     this.event = root.querySelector("#whEvent")!;
     this.tutorialEl = root.querySelector("#whTutorial")!;
-    delegate(this.panel); delegate(this.result); delegate(this.event); delegate(this.tutorialEl);
+    delegate(this.panel); delegate(this.result); delegate(this.event); delegate(this.tutorialEl); delegate(this.labReadoutEl);
 
     for (const s of CATALOG) {
       const b = document.createElement("button");
