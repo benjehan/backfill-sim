@@ -23,7 +23,8 @@ function startGame() {
   document.getElementById("gate")?.remove();
   // headless test hooks boot the default mine straight away (no select screen to click)
   if (location.hash.startsWith("#autorun") || location.hash.startsWith("#smartrun")) {
-    new World(root, location.hash.endsWith("2") ? SCENARIOS[1] : SCENARIOS[0]).start(); return;
+    const m = location.hash.match(/(\d)$/); const si = m ? Math.min(+m[1] - 1, SCENARIOS.length - 1) : 0;
+    new World(root, SCENARIOS[Math.max(0, si)]).start(); return;
   }
   showScenarioSelect(root);
 }

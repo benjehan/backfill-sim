@@ -453,6 +453,7 @@ export class World {
     if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * this.opexMult * dd; // daily running cost
+    if (this.scenario.wet) this.cash -= this.scenario.wet.dewaterPerDay * dd; // pumping the flooded workings out
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
     // 7-day early cylinder — the course's mid-cure warning that a recipe is short
@@ -844,6 +845,7 @@ export class World {
     return {
       mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"), tsfCap,
       millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
+      waterInflow: this.scenario.wet?.waterInflow ?? 0,
     };
   }
   /** Plant-schematic gating: a source is live only if its surface stock actually holds material. */
@@ -855,14 +857,14 @@ export class World {
   /** The next thing the player needs to build to stand up the operation, or null when set. */
   private nextObjective(): string | null {
     const has = (t: string) => this.buildings.some((b) => b.spec.type === t);
-    const T = 6;
+    const T = this.scenario.wet ? 5 : 6; // wet mines get their water free from groundwater
     const step = (n: number, body: string) => `<span class="objStep">Setup ${n}/${T}</span>${body}`;
     if (!has("power")) return step(1, "Build a <b>⚡ Power station</b> — everything on site runs on power.");
     if (!has("plant")) return step(2, "Build the <b>🏭 Backfill plant</b> on the graded pad.");
     if (!has("mill")) return step(3, "Build a <b>⚙ Mill</b> out on the terrain — it refines ore into cash and makes the tailings you backfill with.");
     if (!has("tsf")) return step(4, "Build a <b>⛰ Tailings dam</b> — only ~half the tailings can go underground; the rest must go to the TSF or the mill chokes.");
     if (!has("rail")) return step(5, "Build a <b>🚆 Rail terminal</b> — binder is delivered here by rail.");
-    if (!has("waterpump")) return step(6, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
+    if (!this.scenario.wet && !has("waterpump")) return step(6, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
     const unpowered = this.buildings.filter((b) => b.spec.needsPower && !this.isPowered(b));
     if (unpowered.length) return `<span class="objStep">Power reach</span>${unpowered.length} work(s) out of power range — build a <b>🔌 Substation</b> to relay power out to them.`;
     return `<span class="objStep">Ready</span>You're set. Press <b>▶</b> to run time, then <b>⛏ go underground</b> to reticulate and pour.`;

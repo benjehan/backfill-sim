@@ -48,6 +48,7 @@ export interface SupplyBuildings {
   millMult: number;   // mill/hoist throughput multiplier from upgrades (1 = base)
   waterMult: number;  // water pump rate multiplier
   binderMult: number; // rail binder delivery multiplier
+  waterInflow: number; // groundwater m³/day into the pond (wet mines) — no pump needed
 }
 
 export interface DayResult {
@@ -118,7 +119,9 @@ export class SupplyChain {
     }
 
     // Water pumped to the pond; no pump ⇒ the pond only drains.
-    if (b.water) this.water.level = Math.min(this.water.cap, this.water.level + WATER_PUMP_M3_PER_DAY * b.waterMult * dd);
+    // pumped make-up water + any groundwater flooding in (wet mines keep the pond full for free)
+    const waterIn = (b.water ? WATER_PUMP_M3_PER_DAY * b.waterMult : 0) + b.waterInflow;
+    if (waterIn > 0) this.water.level = Math.min(this.water.cap, this.water.level + waterIn * dd);
 
     return { milledT: milled, revenue, binderCost, toTsf, notes };
   }

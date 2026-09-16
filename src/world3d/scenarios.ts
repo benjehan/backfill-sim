@@ -19,6 +19,7 @@ export interface Scenario {
   vol: { base: number; sx: number; depth: number };  // stope volume formula
   ucs: { base: number; perLevel: number; primary: number }; // 28-day strength targets
   terrain: TerrainTheme;
+  wet?: { dewaterPerDay: number; waterInflow: number }; // flooded mine: $/day to pump out + m³/day groundwater into the pond
 }
 
 export const SCENARIOS: Scenario[] = [
@@ -49,6 +50,21 @@ export const SCENARIOS: Scenario[] = [
     vol: { base: 6500, sx: 60, depth: 3 },
     ucs: { base: 600, perLevel: 150, primary: 220 },
     terrain: { gravel: "#9a8e78", dirt: "#8a6f4a", scrub: "#9a8f5a", hills: "#6e6a42", rock: "#a89876" },
+  },
+  {
+    id: "drowned-level",
+    name: "The Drowned Level",
+    blurb: "A mine below the water table. Groundwater floods the pond (free mixing water) but never stops rising — dewater or drown.",
+    difficulty: "Flooded",
+    startCash: 135_000_000,
+    horizonDays: 56,
+    orebody: 260_000,
+    depths: [200, 380, 560],
+    schedule: [{ a: 1, d: 11 }, { a: 4, d: 17 }, { a: 8, d: 24 }, { a: 12, d: 30 }, { a: 17, d: 40 }, { a: 22, d: 46 }],
+    vol: { base: 6200, sx: 58, depth: 3.2 },
+    ucs: { base: 560, perLevel: 135, primary: 200 },
+    terrain: { gravel: "#6f7378", dirt: "#5a5f52", scrub: "#4e6a4a", hills: "#3d5340", rock: "#6a7078" },
+    wet: { dewaterPerDay: 190_000, waterInflow: 16_000 },
   },
 ];
 
