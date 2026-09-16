@@ -119,7 +119,12 @@ export class World {
   private ghostPos: Vector3 | null = null;
   private ghostValid = false;
 
-  constructor(private root: HTMLElement, private scenario: Scenario = SCENARIOS[0]) {}
+  private tutorial = false;
+  private tutStep = 0;
+  private tutSteps: { text: string; done: () => boolean }[] = [];
+  constructor(private root: HTMLElement, private scenario: Scenario = SCENARIOS[0], opts?: { tutorial?: boolean }) {
+    this.tutorial = !!opts?.tutorial;
+  }
 
   start() {
     this.root.classList.add("world-mode");
@@ -180,11 +185,12 @@ export class World {
     });
     this.hud.setMine(this.scenario.name);
     this.updateEconomy();
+    if (this.tutorial) { this.setupTutorial(); this.renderTutorial(); }
     this.refreshObjective();
     this.underground.updateSchedule(this.day);
     this.refreshClock();
     this.refreshSchedule();
-    this.maybeShowIntro();
+    if (!this.tutorial) this.maybeShowIntro(); // the tutorial replaces the intro card
 
     this.scene.onPointerObservable.add((pi) => this.onPointer(pi));
     this.engine.runRenderLoop(() => {
@@ -198,6 +204,7 @@ export class World {
     if (typeof location !== "undefined" && location.hash.startsWith("#autorun")) setTimeout(() => this.debugAutoRun(), 400);
     if (typeof location !== "undefined" && location.hash.startsWith("#smartrun")) setTimeout(() => this.debugSmartRun(), 400);
     if (typeof location !== "undefined" && location.hash.startsWith("#seed")) setTimeout(() => this.debugSeed(), 400);
+    if (typeof location !== "undefined" && location.hash.startsWith("#tuttest")) setTimeout(() => this.debugTutTest(), 400);
   }
 
   /** Research lab: spend RP on permanent campaign perks. */
@@ -344,6 +351,7 @@ export class World {
     this.camera.radius = 104; this.camera.beta = 1.04; this.camera.alpha = Math.PI * 0.42;
     this.hud.setMode("underground");
     this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`);
+    this.checkTutorial();
   }
 
   private ascend() {
@@ -479,7 +487,7 @@ export class World {
     this.updateEconomy();
 
     // throttled HUD refresh
-    if (Math.floor(this.day) !== this.lastDayShown) { this.lastDayShown = Math.floor(this.day); this.refreshClock(); this.refreshSchedule(); this.saveGame(); if (this.mode === "underground") this.renderStopePanel(); }
+    if (Math.floor(this.day) !== this.lastDayShown) { this.lastDayShown = Math.floor(this.day); this.refreshClock(); this.refreshSchedule(); this.saveGame(); this.checkTutorial(); if (this.mode === "underground") this.renderStopePanel(); }
     else if (this.mode === "underground" && this.selectedStope?.status === "pouring") this.renderStopePanel();
 
     this.maybeFireEvent();
@@ -784,6 +792,7 @@ export class World {
     this.recomputePower();
     this.refreshSupply();
     this.refreshObjective();
+    this.checkTutorial();
     if (silent) return placed;
     this.sound.build();
     this.saveGame();
@@ -941,7 +950,42 @@ export class World {
     if (disconnected.length) return `<span class="objStep">Connect</span>${disconnected.length} supply work(s) can't reach the plant (red line) — resite them within feed-line range.`;
     return `<span class="objStep">Ready</span>You're set. Press <b>▶</b> to run time, then <b>⛏ go underground</b> to reticulate and pour.`;
   }
-  private refreshObjective() { this.hud.setObjective(this.mode === "surface" ? this.nextObjective() : null); }
+  private refreshObjective() {
+    if (this.tutorial && this.tutStep < this.tutSteps.length) { this.hud.setObjective(null); return; } // tutorial replaces the objective banner
+    this.hud.setObjective(this.mode === "surface" ? this.nextObjective() : null);
+  }
+
+  private setupTutorial() {
+    const has = (t: string) => this.buildings.some((b) => b.spec.type === t);
+    const stopeAt = (...st: string[]) => this.underground.stopes.some((s) => st.includes(s.status));
+    this.tutSteps = [
+      { text: `Welcome to <b>Wheal Verity</b>. First, power the site — click <b>⚡ Power station</b> in the palette below, then click the graded pad to place it.`, done: () => has("power") },
+      { text: `Now the heart of the operation: build the <b>🏭 Backfill plant</b> on the pad.`, done: () => has("plant") },
+      { text: `Cash and fill both come from ore. Build a <b>⚙ Mill</b> out on the terrain near the pad — it refines ore into income and makes the tailings you backfill with.`, done: () => has("mill") },
+      { text: `Only ~half the tailings can go back underground. Build a <b>⛰ Tailings dam</b> for the rest, or the mill chokes.`, done: () => has("tsf") },
+      { text: `Cement is delivered by rail. Build a <b>🚆 Rail terminal</b>.`, done: () => has("rail") },
+      { text: `The paste mix needs water — build a <b>💧 Water pump</b>. Watch each work links to the plant: a <b>red line</b> means it's too far to connect.`, done: () => has("waterpump") },
+      { text: `You're stood up! Press <b>▶</b> in the clock (top-left) to start time running.`, done: () => this.day > 1.15 },
+      { text: `Now head below — click <b>⛏ Go underground</b>.`, done: () => this.mode === "underground" },
+      { text: `Click a <b>ready stope</b> (green outline). Set a pipe <b>class</b> on each leg so it out-rates the pressure it holds, then <b>Build reticulation</b>.`, done: () => stopeAt("piped", "pouring", "curing", "cured") },
+      { text: `Sign the barricade & pour note, then <b>Begin pour</b>. Keep the flow in the band — flush if a plug builds and pressure climbs.`, done: () => stopeAt("pouring", "curing", "cured") },
+      { text: `That's the whole loop: fill stopes before they're due, keep the mill fed and the TSF from filling, tune your mix in the 🧪 Lab, and answer to the board. You've got it from here — good luck!`, done: () => false },
+    ];
+  }
+  private checkTutorial() {
+    if (!this.tutorial) return;
+    let advanced = false;
+    while (this.tutStep < this.tutSteps.length - 1 && this.tutSteps[this.tutStep].done()) { this.tutStep++; advanced = true; }
+    if (advanced) this.sound.pass();
+    this.renderTutorial();
+  }
+  private renderTutorial() {
+    if (!this.tutorial || this.tutStep >= this.tutSteps.length) { this.hud.setTutorial(null); return; }
+    const s = this.tutSteps[this.tutStep]; const last = this.tutStep === this.tutSteps.length - 1;
+    this.hud.setTutorial(`<div class="tutHead">🎓 Tutorial · step ${this.tutStep + 1}/${this.tutSteps.length}</div><div class="tutBody">${s.text}</div>`
+      + (last ? `<button class="pBtn primary tutFinish" data-act="tutdone"><b>Finish ▶</b></button>` : `<button class="tutSkip" data-act="tutskip">Skip tutorial</button>`));
+  }
+  private endTutorial() { this.tutorial = false; this.hud.setTutorial(null); this.refreshObjective(); }
 
   private linkMat(hex: string, emit = 0.12): StandardMaterial {
     const m = new StandardMaterial("lk" + hex, this.scene);
@@ -1290,9 +1334,10 @@ export class World {
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
   }
 
-  private onPanelAction(act: string) { this.applyPanelAction(act); this.saveGame(); }
+  private onPanelAction(act: string) { this.applyPanelAction(act); this.saveGame(); this.checkTutorial(); }
   private applyPanelAction(act: string) {
     if (act === "restart") { location.reload(); return; }
+    if (act === "tutskip" || act === "tutdone") { this.endTutorial(); return; }
     if (act.startsWith("ev:")) { this.resolveEvent(+act.slice(3)); return; }
     if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
     if (act === "closebuilding") { this.deselectBuilding(); return; }
@@ -1368,6 +1413,16 @@ export class World {
     this.underground.commitReticulation(i);
   }
   debugUpgrade(type: string) { const b = this.buildings.find((x) => x.spec.type === type); if (b) { this.selectedBuilding = b; this.upgradeBuilding(); this.selectedBuilding = null; } }
+  /** Drive the tutorial through every step to verify the gating advances. */
+  debugTutTest() {
+    const L = (s: string) => console.log("TUT|" + s + ` step=${this.tutStep + 1}/${this.tutSteps.length}`);
+    L("start");
+    for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) { this.debugBuild(t, x, z); L(`built ${t}`); }
+    this.debugAdvance(2); this.checkTutorial(); L("pressed play");
+    this.descend(); L("descended");
+    this.smartReticulate(0); this.checkTutorial(); L("reticulated S1");
+    const s0 = this.underground.stopes[0]; s0.signBarricade = s0.signPourNote = true; this.underground.startPour(s0); this.checkTutorial(); L("poured S1");
+  }
   /** Build a partial campaign and leave it autosaved (for save/resume testing). */
   debugSeed() {
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);

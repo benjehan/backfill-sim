@@ -27,6 +27,7 @@ function startGame() {
   if (location.hash.startsWith("#resumelog")) { // headless resume test
     const sv = readSave(); const w = new World(root, sv ? scenarioById(sv.scenario) : SCENARIOS[0]); w.start(); if (sv) w.loadSave(sv); return;
   }
+  if (location.hash.startsWith("#tut")) { new World(root, SCENARIOS[0], { tutorial: true }).start(); return; }
   if (location.hash.startsWith("#autorun") || location.hash.startsWith("#smartrun") || location.hash.startsWith("#seed")) {
     const m = location.hash.match(/(\d)$/); const si = m ? Math.min(+m[1] - 1, SCENARIOS.length - 1) : 0;
     new World(root, SCENARIOS[Math.max(0, si)]).start(); return;
@@ -56,6 +57,7 @@ function showScenarioSelect(root: HTMLElement) {
     el.innerHTML = `<div class="scWrap">
       <div class="scTitle">BACKFILL <span>TYCOON</span></div>
       <div class="scSub">Choose your operation</div>
+      <button class="scTutorial" id="scTutorial">🎓 New here? Play the guided tutorial</button>
       ${resume}
       <div class="scCards">${SCENARIOS.map((s, i) => `
         <button class="scCard" data-i="${i}">
@@ -66,6 +68,9 @@ function showScenarioSelect(root: HTMLElement) {
         </button>`).join("")}</div>
       ${hq}
     </div>`;
+    el.querySelector("#scTutorial")?.addEventListener("click", () => {
+      el.remove(); new World(root, SCENARIOS[0], { tutorial: true }).start();
+    });
     el.querySelector("#scContinue")?.addEventListener("click", () => {
       const sv = readSave(); if (!sv) { render(); return; }
       el.remove(); const w = new World(root, scenarioById(sv.scenario)); w.start(); w.loadSave(sv);

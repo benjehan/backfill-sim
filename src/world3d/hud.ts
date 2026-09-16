@@ -79,6 +79,7 @@ export class Hud {
       </div>
       <div class="whRes" id="whRes"></div>
       <button class="whMode" id="whMode">⛏ Go underground</button>
+      <div class="whTutorial hidden" id="whTutorial"></div>
       <div class="whObjective hidden" id="whObjective"></div>
       <div class="whStatus" id="whStatus">Lay out the surface. Start with a power station.</div>
       <div class="whPalette" id="whPalette"></div>
@@ -128,7 +129,8 @@ export class Hud {
       if (el) cb.onPanelAction(el.dataset.act!);
     });
     this.event = root.querySelector("#whEvent")!;
-    delegate(this.panel); delegate(this.result); delegate(this.event);
+    this.tutorialEl = root.querySelector("#whTutorial")!;
+    delegate(this.panel); delegate(this.result); delegate(this.event); delegate(this.tutorialEl);
 
     for (const s of CATALOG) {
       const b = document.createElement("button");
@@ -215,6 +217,12 @@ export class Hud {
       bar("Tailings buf", "t", r.tailings) +
       bar("Water pond", "m³", r.water) +
       bar("TSF", "t", r.tsf, true);
+  }
+
+  private tutorialEl!: HTMLElement;
+  setTutorial(html: string | null) {
+    if (html) { this.tutorialEl.innerHTML = html; this.tutorialEl.classList.remove("hidden"); }
+    else this.tutorialEl.classList.add("hidden");
   }
 
   private objectiveEl?: HTMLElement;

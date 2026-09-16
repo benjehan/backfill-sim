@@ -518,6 +518,10 @@ select, input[type=number] {
 .scDiff.remote { background: #5a4a2a; color: #f0e0c0; }
 .scBlurb { color: var(--muted); font-size: 13px; line-height: 1.5; min-height: 56px; }
 .scStats { font-size: 11px; color: #8fb89e; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.scTutorial { display: inline-block; margin: 0 auto 20px; background: rgba(255,176,32,.12); border: 1px solid var(--accent);
+  color: var(--accent); border-radius: 10px; padding: 10px 22px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all .12s; }
+.scTutorial:hover { background: var(--accent); color: #10202b; }
+
 .scResume { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 720px; margin: 0 auto 22px;
   background: rgba(20,40,30,.7); border: 1px solid #2f6b45; border-left: 4px solid #39d98a; border-radius: 10px; padding: 12px 18px; }
 .scResumeInfo { color: #dff3e6; font-size: 14px; }
@@ -623,3 +627,14 @@ select, input[type=number] {
 
 /* result / event / intro cards */
 .whResult, .whEvent { box-shadow: 0 14px 44px rgba(0,0,0,.55); }
+
+/* guided tutorial overlay */
+.whTutorial { position: absolute; left: 50%; bottom: 170px; transform: translateX(-50%); width: 520px; max-width: 92vw;
+  background: rgba(14,26,20,.92); border: 1px solid #2f6b45; border-left: 4px solid #39d98a; border-radius: 12px;
+  padding: 12px 18px; text-align: center; pointer-events: auto; backdrop-filter: blur(4px); box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+.tutHead { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #7be0a6; margin-bottom: 5px; }
+.tutBody { font-size: 14px; color: #eaf6ee; line-height: 1.5; }
+.tutBody b { color: #aef0c8; }
+.tutSkip { margin-top: 8px; background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; text-decoration: underline; pointer-events: auto; }
+.tutFinish { width: 200px; margin: 10px auto 0; text-align: center; }
+.tutFinish b { text-align: center; }
