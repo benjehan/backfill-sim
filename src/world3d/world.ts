@@ -39,6 +39,7 @@ import { SoundKit } from "./sound.js";
 import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES } from "./supplyChain.js";
 import { SCENARIOS, type Scenario } from "./scenarios.js";
 import { loadCompany, saveCompany, legacyForGrade, hasPerk } from "./company.js";
+import { writeSave, clearSave, SAVE_VERSION } from "./savegame.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
@@ -195,6 +196,7 @@ export class World {
     (window as any).__world = this;
     if (typeof location !== "undefined" && location.hash.startsWith("#autorun")) setTimeout(() => this.debugAutoRun(), 400);
     if (typeof location !== "undefined" && location.hash.startsWith("#smartrun")) setTimeout(() => this.debugSmartRun(), 400);
+    if (typeof location !== "undefined" && location.hash.startsWith("#seed")) setTimeout(() => this.debugSeed(), 400);
   }
 
   /** Research lab: spend RP on permanent campaign perks. */
@@ -476,7 +478,7 @@ export class World {
     this.updateEconomy();
 
     // throttled HUD refresh
-    if (Math.floor(this.day) !== this.lastDayShown) { this.lastDayShown = Math.floor(this.day); this.refreshClock(); this.refreshSchedule(); if (this.mode === "underground") this.renderStopePanel(); }
+    if (Math.floor(this.day) !== this.lastDayShown) { this.lastDayShown = Math.floor(this.day); this.refreshClock(); this.refreshSchedule(); this.saveGame(); if (this.mode === "underground") this.renderStopePanel(); }
     else if (this.mode === "underground" && this.selectedStope?.status === "pouring") this.renderStopePanel();
 
     this.maybeFireEvent();
@@ -587,6 +589,7 @@ export class World {
   private endCampaign() {
     if (this.ended) return;
     this.ended = true; this.paused = true;
+    clearSave(); // finished campaigns don't resume
     const stopes = this.underground.stopes;
     const total = stopes.length;
     const cured = stopes.filter((s) => s.status === "cured").length;
@@ -620,6 +623,62 @@ export class World {
         <div><span>Company legacy</span><b>+${earned} → ${co.legacy}</b></div>
       </div>
       <button class="pBtn primary" data-act="restart"><b>New campaign</b></button>`);
+  }
+
+  // ---- save / resume ---------------------------------------------------------
+  private serialize() {
+    return {
+      v: SAVE_VERSION, scenario: this.scenario.id, savedAt: Math.floor(this.day),
+      day: this.day, speedIdx: this.speedIdx, cash: this.cash, opexPerDay: this.opexPerDay,
+      rp: this.rp, research: [...this.research], opexMult: this.opexMult,
+      safetyIncidents: this.safetyIncidents, firedEvents: [...this.firedEvents],
+      tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
+      tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
+      plantThroughput: this.plantThroughput,
+      recipe: { solids: this.recipe.solids, binder: this.recipe.binderKgPerM3 },
+      supply: {
+        ore: this.supply.ore.level, oreReserve: this.supply.oreReserve.level,
+        tailings: this.supply.tailings.level, binder: this.supply.binder.level, water: this.supply.water.level,
+        tsf: this.supply.tsf.level,
+      },
+      buildings: this.buildings.map((b) => ({ type: b.spec.type, x: b.pos.x, z: b.pos.z, tier: b.tier, raises: b.raises })),
+      stopes: this.underground.serializeStopes(),
+      net: this.underground.net.serialize(),
+      plant: this.plantInterior.serializeLine(),
+    };
+  }
+  private saveGame() { if (!this.ended) writeSave(this.serialize()); }
+
+  /** Rebuild a saved campaign onto a freshly started World (same scenario). */
+  loadSave(s: any) {
+    // buildings first (silent — no cash deduction, we set cash after)
+    for (const b of s.buildings) {
+      const spec = specOf(b.type); const at = new Vector3(b.x, heightAt(b.x, b.z), b.z);
+      const placed = this.place(spec, at, true);
+      placed.tier = b.tier || 0; placed.raises = b.raises || 0;
+      if (placed.tier) placed.root.scaling.setAll(1 + placed.tier * 0.08);
+      if (placed.raises) placed.root.scaling.y = 1 + placed.raises * 0.22;
+    }
+    this.underground.net.applySave(s.net);
+    this.underground.applyStopes(s.stopes, s.day);
+    this.plantInterior.applyLine(s.plant);
+    // scalar state
+    this.day = s.day; this.speedIdx = s.speedIdx ?? 1; this.cash = s.cash; this.opexPerDay = s.opexPerDay;
+    this.rp = s.rp || 0; this.research = new Set(s.research || []); this.opexMult = s.opexMult ?? 1;
+    this.safetyIncidents = s.safetyIncidents || 0; this.firedEvents = new Set(s.firedEvents || []);
+    this.tempDeliveryMult = s.tempDeliveryMult ?? 1; this.tempDeliveryUntil = s.tempDeliveryUntil ?? 0;
+    this.tempPourMult = s.tempPourMult ?? 1; this.tempPourUntil = s.tempPourUntil ?? 0;
+    this.plantThroughput = s.plantThroughput ?? this.plantThroughput;
+    if (s.recipe) { this.recipe.solids = s.recipe.solids; this.recipe.binderKgPerM3 = s.recipe.binder; }
+    this.supply.ore.level = s.supply.ore; this.supply.oreReserve.level = s.supply.oreReserve;
+    this.supply.tailings.level = s.supply.tailings; this.supply.binder.level = s.supply.binder;
+    this.supply.water.level = s.supply.water; this.supply.tsf.level = s.supply.tsf;
+    this.paused = true; // resume paused so the player gets their bearings
+    this.recomputePower(); this.refreshSupply(); this.updateEconomy(); this.refreshObjective();
+    this.refreshClock(); this.refreshSchedule();
+    this.hud.setStatus(`Campaign resumed — day ${Math.floor(this.day)}. Press ▶ when ready.`);
+    const c = this.underground.counts();
+    console.log(`RESUMED|day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m buildings=${this.buildings.length} tiers=${this.buildings.map((b) => b.tier).join("")} cured=${c.cured} statuses=${this.underground.stopes.map((s) => s.status[0]).join("")} tsf=${Math.round(this.supply.tsf.level / 1000)}k rp=${Math.floor(this.rp)}`);
   }
 
   // ---- pointer --------------------------------------------------------------
@@ -709,23 +768,27 @@ export class World {
     return true;
   }
 
-  private place(spec: BuildingSpec, at: Vector3) {
+  private place(spec: BuildingSpec, at: Vector3, silent = false): Placed {
     const bi = this.buildings.length;
     if (spec.offPad) this.gradePlatform(at, spec.fw, spec.fd); // cut a flat bench into the slope first
     const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type, bi }; });
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
-    this.cash -= spec.cost;
+    if (!silent) this.cash -= spec.cost;
     this.opexPerDay += spec.opexPerDay;
-    this.buildings.push({ spec, root, pos: at, marker: null, raises: 0, tier: 0 });
+    const placed: Placed = { spec, root, pos: at, marker: null, raises: 0, tier: 0 };
+    this.buildings.push(placed);
     if (spec.spawnsWorkers) this.crew.add(spec.spawnsWorkers);
     if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
     this.drawRoads();
     this.recomputePower();
     this.refreshSupply();
     this.refreshObjective();
+    if (silent) return placed;
     this.sound.build();
+    this.saveGame();
     this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
+    return placed;
   }
 
   /** Cut a flat gravel bench into the sloping terrain under an off-pad structure. */
@@ -1216,7 +1279,8 @@ export class World {
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
   }
 
-  private onPanelAction(act: string) {
+  private onPanelAction(act: string) { this.applyPanelAction(act); this.saveGame(); }
+  private applyPanelAction(act: string) {
     if (act === "restart") { location.reload(); return; }
     if (act.startsWith("ev:")) { this.resolveEvent(+act.slice(3)); return; }
     if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
@@ -1293,6 +1357,19 @@ export class World {
     this.underground.commitReticulation(i);
   }
   debugUpgrade(type: string) { const b = this.buildings.find((x) => x.spec.type === type); if (b) { this.selectedBuilding = b; this.upgradeBuilding(); this.selectedBuilding = null; } }
+  /** Build a partial campaign and leave it autosaved (for save/resume testing). */
+  debugSeed() {
+    for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
+    this.debugBuildPlantLine(); this.debugUpgrade("mill"); this.descend();
+    for (let k = 0; k < 8 && !this.ended; k++) {
+      this.underground.stopes.forEach((s, i) => { if (s.status === "available") { try { this.smartReticulate(i); } catch { /* not yet */ } } });
+      if (!this.underground.stopes.some((s) => s.status === "pouring")) { const n = this.underground.stopes.find((s) => s.status === "piped"); if (n) { n.signBarricade = n.signPourNote = n.signLowStart = true; this.underground.startPour(n); } }
+      this.debugAdvance(2);
+    }
+    this.saveGame();
+    const c = this.underground.counts();
+    console.log(`SEEDED|day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m buildings=${this.buildings.length} tiers=${this.buildings.map((b) => b.tier).join("")} cured=${c.cured} statuses=${this.underground.stopes.map((s) => s.status[0]).join("")} tsf=${Math.round(this.supply.tsf.level / 1000)}k rp=${Math.floor(this.rp)}`);
+  }
   debugBuildPlantLine() {
     this.plantInterior.debugBuildLine();                 // places + wires the line, solves, reports capacity
     this.plantInterior.setSupply(this.interiorSupply()); // schematic gating; plantThroughput stays = capacity

@@ -338,6 +338,28 @@ export class PlantInterior {
     return cap;
   }
 
+  // ---- save / restore --------------------------------------------------------
+  serializeLine() {
+    return {
+      machines: this.plant.machines.map((m) => ({ id: m.id, type: m.type, col: m.col, row: m.row })),
+      pipes: this.plant.pipes.map((p) => ({ from: p.from.m, fp: p.from.port, to: p.to.m, tp: p.to.port })),
+    };
+  }
+  applyLine(data: { machines: { id: string; type: string; col: number; row: number }[]; pipes: { from: string; fp: number; to: string; tp: number }[] }) {
+    if (!data?.machines) return;
+    for (const m of [...this.plant.machines]) if (CATALOG[m.type].kind === "transform") this.plant.removeMachine(m.id);
+    const idMap = new Map<string, string>();
+    for (const sm of data.machines) {
+      if (CATALOG[sm.type].kind !== "transform") { // source/sink pre-exist in a fresh plant — map by type
+        const ex = this.plant.machines.find((m) => m.type === sm.type); if (ex) idMap.set(sm.id, ex.id);
+        continue;
+      }
+      const nm = this.plant.place(sm.type, sm.col, sm.row); if (nm) idMap.set(sm.id, nm.id);
+    }
+    for (const p of data.pipes) { const f = idMap.get(p.from), t = idMap.get(p.to); if (f && t) this.plant.connect(f, p.fp, t, p.tp); }
+    this.rebuild(); this.solveSync();
+  }
+
   /** Debug/testing: place and wire a full working line. */
   debugBuildLine() {
     this.plant.place("thickener_hr", 3, 1); this.plant.place("cyclone", 6, 1); this.plant.place("filter_vac", 9, 1); this.plant.place("mixer_twin", 12, 4); this.plant.place("pump_cent", 15, 4);

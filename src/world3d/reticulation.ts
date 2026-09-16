@@ -182,6 +182,22 @@ export class Reticulation {
   }
   /** Total pipe length from surface to the stope along the current path (drives the pour's friction). */
   pathTotalLenM(stopeIdx: number): number { const p = this.pathFor(stopeIdx); return p[p.length - 1].cumLenM; }
+
+  // ---- save / restore --------------------------------------------------------
+  serialize() {
+    return {
+      segs: this.segs.map((s) => ({ id: s.id, classId: s.classId, choke: s.choke, booster: s.booster, built: s.built })),
+      drilled: [...this.drilled],
+    };
+  }
+  applySave(data: { segs: { id: string; classId: number | null; choke: boolean; booster: boolean; built: boolean }[]; drilled: number[] }) {
+    for (const idx of data.drilled) if (!this.drilled.has(idx)) this.toggleDrill(idx); // enables the DB/DBr meshes
+    for (const sd of data.segs) {
+      const s = this.byId.get(sd.id); if (!s) continue;
+      s.classId = sd.classId; s.choke = sd.choke; s.booster = sd.booster; s.built = sd.built;
+    }
+    this.repaintAll();
+  }
   pathCanBuild(stopeIdx: number): boolean { return this.pathFor(stopeIdx).every((s) => s.classId != null && this.valid(s)); }
   pathReady(stopeIdx: number): boolean { return this.pathFor(stopeIdx).every((s) => s.built && this.valid(s)); }
   pathPlannedCost(stopeIdx: number): number { return this.pathFor(stopeIdx).filter((s) => !s.built).reduce((a, s) => a + this.cost(s), 0); }

@@ -1,6 +1,8 @@
 import { World } from "./world3d/world.js";
 import { SCENARIOS } from "./world3d/scenarios.js";
 import { loadCompany, saveCompany, META_PERKS, hasPerk } from "./world3d/company.js";
+import { readSave, clearSave } from "./world3d/savegame.js";
+import { scenarioById } from "./world3d/scenarios.js";
 
 // Passcode gate. We store only a SHA-256 hash of the code, never the plaintext.
 // This is light protection (obscures a static site from casual visitors) — it is
@@ -22,7 +24,10 @@ function startGame() {
   root.classList.remove("locked");
   document.getElementById("gate")?.remove();
   // headless test hooks boot the default mine straight away (no select screen to click)
-  if (location.hash.startsWith("#autorun") || location.hash.startsWith("#smartrun")) {
+  if (location.hash.startsWith("#resumelog")) { // headless resume test
+    const sv = readSave(); const w = new World(root, sv ? scenarioById(sv.scenario) : SCENARIOS[0]); w.start(); if (sv) w.loadSave(sv); return;
+  }
+  if (location.hash.startsWith("#autorun") || location.hash.startsWith("#smartrun") || location.hash.startsWith("#seed")) {
     const m = location.hash.match(/(\d)$/); const si = m ? Math.min(+m[1] - 1, SCENARIOS.length - 1) : 0;
     new World(root, SCENARIOS[Math.max(0, si)]).start(); return;
   }
@@ -34,6 +39,11 @@ function showScenarioSelect(root: HTMLElement) {
   el.className = "scenarioSelect";
   const render = () => {
     const co = loadCompany();
+    const save = readSave();
+    const resume = save ? `<div class="scResume">
+      <div class="scResumeInfo">In progress: <b>${scenarioById(save.scenario).name}</b> · Day ${save.savedAt ?? Math.floor(save.day)}</div>
+      <div class="scResumeBtns"><button class="pBtn primary" id="scContinue"><b>▶ Continue</b></button><button class="scAbandon" id="scAbandon">Abandon</button></div>
+    </div>` : "";
     const hq = `<div class="hqPanel">
       <div class="hqHead">🏢 Company HQ <span class="hqLegacy">${co.legacy} legacy</span></div>
       <div class="hqSub">Permanent perks, earned from every board review. Applied to all future campaigns.</div>
@@ -46,6 +56,7 @@ function showScenarioSelect(root: HTMLElement) {
     el.innerHTML = `<div class="scWrap">
       <div class="scTitle">BACKFILL <span>TYCOON</span></div>
       <div class="scSub">Choose your operation</div>
+      ${resume}
       <div class="scCards">${SCENARIOS.map((s, i) => `
         <button class="scCard" data-i="${i}">
           <div class="scName">${s.name}</div>
@@ -55,6 +66,11 @@ function showScenarioSelect(root: HTMLElement) {
         </button>`).join("")}</div>
       ${hq}
     </div>`;
+    el.querySelector("#scContinue")?.addEventListener("click", () => {
+      const sv = readSave(); if (!sv) { render(); return; }
+      el.remove(); const w = new World(root, scenarioById(sv.scenario)); w.start(); w.loadSave(sv);
+    });
+    el.querySelector("#scAbandon")?.addEventListener("click", () => { clearSave(); render(); });
     el.querySelectorAll<HTMLElement>("[data-i]").forEach((b) => b.addEventListener("click", () => {
       const s = SCENARIOS[+b.dataset.i!]; el.remove(); new World(root, s).start();
     }));

@@ -10,7 +10,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
-import { CURE_DAYS, type PipeClass } from "./backfillModel.js";
+import { CURE_DAYS, PIPE_CLASSES, type PipeClass } from "./backfillModel.js";
 import { Reticulation, BOOST_FLOW } from "./reticulation.js";
 import { SCENARIOS, type Scenario } from "./scenarios.js";
 
@@ -150,6 +150,28 @@ export class Underground {
     this.stopes.forEach((s, i) => {
       s.id = `S${i + 1}`; s.mesh.metadata = { stopeId: s.id };
       s.availableDay = sc.schedule[i].a; s.dueDay = sc.schedule[i].d;
+    });
+  }
+
+  // ---- save / restore --------------------------------------------------------
+  serializeStopes() {
+    return this.stopes.map((s) => ({
+      status: s.status, fillType: s.fillType, placedM3: s.placedM3, cureStartDay: s.cureStartDay,
+      ucsAchievedKpa: s.ucsAchievedKpa, ucsPass: s.ucsPass, ucs7Kpa: s.ucs7Kpa ?? 0, ucs7Reported: !!s.ucs7Reported,
+      signBarricade: !!s.signBarricade, signPourNote: !!s.signPourNote, signLowStart: !!s.signLowStart,
+      clsId: s.cls?.id ?? null, choke: s.choke, lineBoost: s.lineBoost, lengthM: s.lengthM,
+      barricadeRisk: !!s.barricadeRisk, recipe: s.recipe ?? null,
+    }));
+  }
+  applyStopes(data: any[], day: number) {
+    data.forEach((d, i) => {
+      const s = this.stopes[i]; if (!s) return;
+      s.status = d.status; s.fillType = d.fillType; s.placedM3 = d.placedM3; s.cureStartDay = d.cureStartDay;
+      s.ucsAchievedKpa = d.ucsAchievedKpa; s.ucsPass = d.ucsPass; s.ucs7Kpa = d.ucs7Kpa; s.ucs7Reported = d.ucs7Reported;
+      s.signBarricade = d.signBarricade; s.signPourNote = d.signPourNote; s.signLowStart = d.signLowStart;
+      s.cls = d.clsId == null ? null : PIPE_CLASSES[d.clsId]; s.choke = d.choke; s.lineBoost = d.lineBoost;
+      s.lengthM = d.lengthM; s.barricadeRisk = d.barricadeRisk; s.recipe = d.recipe ?? undefined;
+      this.paint(s, day);
     });
   }
 
