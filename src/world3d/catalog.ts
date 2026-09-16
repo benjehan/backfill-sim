@@ -5,7 +5,7 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import {
   createPlant, createPowerStation, createThickener, createSilos, createWorkshop, createDry, createCrusher,
-  createMill, createRail, createWaterPump, createTSF, createSubstation, createHaulage, createIsotainer,
+  createMill, createRail, createWaterPump, createTSF, createSubstation, createHaulage, createIsotainer, createControlled,
 } from "./buildings.js";
 
 export interface BuildingSpec {
@@ -45,6 +45,7 @@ export const CATALOG: BuildingSpec[] = [
   { type: "isotainer", label: "Isotainer pad (binder)", icon: "📦", cost: 2_000_000, fw: 12, fd: 10, markerY: 6, needsPower: false, opexPerDay: 10_000, supplies: "binder", offPad: true, binder: { deliveryMult: 0.5, costMult: 1.6, siloCap: 2_000, reliable: true }, make: createIsotainer },
   { type: "waterpump", label: "Water pump", icon: "💧", cost: 6_000_000, fw: 11, fd: 11, markerY: 6, needsPower: true, opexPerDay: 15_000, supplies: "water", offPad: true, upgrade: { stat: "water", max: 2, cost0: 3_000_000, step: 0.5 }, make: createWaterPump },
   { type: "tsf", label: "Tailings dam (TSF)", icon: "⛰", cost: 15_000_000, fw: 42, fd: 42, markerY: 7, needsPower: false, opexPerDay: 22_000, tsfCap: 60_000, offPad: true, make: createTSF },
+  { type: "controlled", label: "Controlled slurry pond (lined)", icon: "☣", cost: 6_000_000, fw: 24, fd: 24, markerY: 5, needsPower: false, opexPerDay: 15_000, offPad: true, make: createControlled },
 ];
 
 export const specOf = (type: string) => CATALOG.find((c) => c.type === type)!;

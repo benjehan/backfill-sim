@@ -122,6 +122,17 @@ export const createRail: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
+// Controlled slurry pond: a lined, bunded cell for reactive (PAG/reagent) reject.
+export const createControlled: Build = (scene, onMesh) =>
+  rootOf(scene, "controlled", () => {
+    const parts: Mesh[] = [];
+    const berm = box(scene, "cberm", 24, 2.4, 24, "#5a5148"); berm.position.y = 1.2; parts.push(berm);
+    const liner = box(scene, "cliner", 20, 0.4, 20, "#2b3a44"); liner.position.y = 2.2; parts.push(liner); // HDPE liner
+    const slurry = box(scene, "cslurry", 18, 1.2, 18, "#6b5a3f"); slurry.position.y = 2.6; parts.push(slurry);
+    const pipe = cyl(scene, "cpipe", 1, 8, "#4c5a66", 8); pipe.rotation.z = Math.PI / 2; pipe.position.set(-13, 3, 0); parts.push(pipe);
+    return parts;
+  }, onMesh);
+
 // Road haulage depot: a binder silo fed by tanker trucks (low capex, pricier binder).
 export const createHaulage: Build = (scene, onMesh) =>
   rootOf(scene, "haulage", () => {

@@ -72,6 +72,7 @@ const PLUG_SET_FRAC = 0.12; // the plug is placed over the first ~12% of fill
 const SURFACE_UNIT_M = 7.5; // world units → metres for the surface pipe run (plant → shaft)
 const TESTWORK_COST = 4_000_000; // a lab test-work campaign (characterisation + rheology + UCS)
 const TESTWORK_DAYS = 4;         // results lag reality — the program takes time
+const ENV_PENALTY_PER_T = 42;    // fine per tonne of reactive (PAG) reject sent to the TSF uncontained
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
@@ -120,6 +121,8 @@ export class World {
   private supply = new SupplyChain();
   private millDayIncome = 0;
   private lastWaterReused = 0; // m³/day of process water recovered by dewatering (HUD)
+  private envFinesTotal = 0;   // cumulative environmental fines for uncontained PAG reject
+  private envBreachActive = false;
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
@@ -512,6 +515,14 @@ export class World {
     const modeCostMult = this.activeBinderMode()?.costMult ?? 1; // haulage/isotainer cost more per tonne
     const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult;
     this.cash += revenue - binderCost;
+    // Reactive (PAG/reagent) reject sent to the TSF without a lined controlled-slurry
+    // facility is an environmental breach — an ongoing fine until you contain it.
+    const minl = this.scenario.mineralogy;
+    if (minl?.reactive && sup.rejectStreamT > 0 && !this.hasControlledSlurry()) {
+      const fine = ENV_PENALTY_PER_T * sup.rejectStreamT;
+      this.cash -= fine; this.envFinesTotal += fine; this.envBreachActive = true;
+      if (Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(`☣ ${minl.label} reject to the TSF uncontained — environmental fine. Build a ☣ Controlled slurry pond to contain the PAG reject.`);
+    } else this.envBreachActive = false;
     this.rp += sup.milledT / 4000; // know-how accrues as ore is processed
     this.millDayIncome = dd > 0 ? revenue / dd : 0; // $/day for the HUD readout
     if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
@@ -1092,6 +1103,7 @@ export class World {
     }
   }
   private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher" && b.built); }
+  private hasControlledSlurry() { return this.buildings.some((b) => b.spec.type === "controlled" && b.built); }
   /** Effective power radius including upgrades. */
   private radiusOf(b: Placed) {
     const r = b.spec.powerRadius ?? 0;
@@ -1162,6 +1174,7 @@ export class World {
     if (unpowered.length) return `<span class="objStep">Power reach</span>${unpowered.length} work(s) out of power range — build a <b>🔌 Substation</b> to relay power out to them.`;
     const disconnected = this.buildings.filter((b) => b.spec.supplies && this.isPowered(b) && !this.connected(b));
     if (disconnected.length) return `<span class="objStep">Connect</span>${disconnected.length} supply work(s) can't reach the plant (red line) — resite them within feed-line range.`;
+    if (this.scenario.mineralogy?.reactive && !this.hasControlledSlurry()) return `<span class="objStep">Environment</span>This ore's reject is <b>reactive (PAG)</b> — build a <b>☣ Controlled slurry pond</b> to contain it, or face ongoing environmental fines.`;
     return `<span class="objStep">Ready</span>You're set. Press <b>▶</b> to run time, then <b>⛏ go underground</b> to reticulate and pour.`;
   }
   private refreshObjective() {

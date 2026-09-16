@@ -21,7 +21,7 @@ export interface Scenario {
   terrain: TerrainTheme;
   wet?: { dewaterPerDay: number; waterInflow: number }; // flooded mine: $/day to pump out + m³/day groundwater into the pond
   binder?: { deliveryMult: number; costMult: number };  // remote mine: throttled + pricier cement, pushing you to CAF/HF
-  mineralogy?: { label: string; note: string; varianceAdd: number; latePenalty: number }; // tailings risk revealed by test-work
+  mineralogy?: { label: string; note: string; varianceAdd: number; latePenalty: number; reactive?: boolean }; // tailings risk revealed by test-work; reactive ⇒ reject needs a controlled (lined) slurry facility
 }
 
 export const SCENARIOS: Scenario[] = [
@@ -53,7 +53,7 @@ export const SCENARIOS: Scenario[] = [
     vol: { base: 6500, sx: 60, depth: 3 },
     ucs: { base: 600, perLevel: 150, primary: 220 },
     terrain: { gravel: "#9a8e78", dirt: "#8a6f4a", scrub: "#9a8f5a", hills: "#6e6a42", rock: "#a89876" },
-    mineralogy: { label: "Sulphidic (pyrite)", note: "sulphide oxidation → internal sulphate attack; delayed strength loss unless you design for it", varianceAdd: 0.02, latePenalty: 0.14 },
+    mineralogy: { label: "Sulphidic (pyrite)", note: "sulphide oxidation → internal sulphate attack; delayed strength loss unless you design for it. PAG reject needs containment", varianceAdd: 0.02, latePenalty: 0.14, reactive: true },
   },
   {
     id: "drowned-level",
@@ -85,7 +85,7 @@ export const SCENARIOS: Scenario[] = [
     ucs: { base: 520, perLevel: 130, primary: 190 },
     terrain: { gravel: "#7a8088", dirt: "#6a6a62", scrub: "#6a7a6e", hills: "#4f5a54", rock: "#8a9098" },
     binder: { deliveryMult: 0.45, costMult: 1.7 },
-    mineralogy: { label: "Variable tungsten tails", note: "inconsistent PSD run to run — variance is the enemy; consistently bad beats highly variable", varianceAdd: 0.05, latePenalty: 0.06 },
+    mineralogy: { label: "Variable tungsten tails", note: "inconsistent PSD run to run — variance is the enemy; consistently bad beats highly variable. Reagent-bearing reject needs containment", varianceAdd: 0.05, latePenalty: 0.06, reactive: true },
   },
 ];
 
