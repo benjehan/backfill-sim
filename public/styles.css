@@ -418,6 +418,17 @@ select, input[type=number] {
 .fillBtn { flex: 1; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px 4px; font-size: 12px; font-weight: 600; cursor: pointer; }
 .fillBtn:hover { border-color: var(--accent); }
 .fillBtn.on { background: var(--accent); color: #10202b; border-color: var(--accent); }
+.fillBtn.suit-bad:not(.on) { border-color: #6b2a2a; }
+.fillBtn .suitMark { font-style: normal; font-size: 10px; opacity: .9; }
+.fillBtn.suit-good .suitMark { color: var(--green); }
+.fillBtn.suit-ok .suitMark { color: var(--muted); }
+.fillBtn.suit-bad .suitMark { color: var(--red); }
+.fillBtn.on .suitMark { color: #10202b; }
+/* strength design basis + warnings */
+.pBasis { font-size: 11px; color: var(--muted); line-height: 1.5; margin: -6px 0 10px; padding: 7px 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
+.pBasis b { color: var(--accent); }
+.pWarn { font-size: 11px; color: #f2b8b8; background: rgba(120,30,30,.28); border: 1px solid #6b2a2a; border-radius: 6px; padding: 6px 8px; margin: 6px 0; line-height: 1.4; }
+.pWarnNote { color: #f2b8b8; }
 /* pre-pour sign-off checklist */
 .chkList { display: flex; flex-direction: column; gap: 5px; margin: 6px 0; }
 .chkBtn { text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; font-size: 12px; cursor: pointer; }

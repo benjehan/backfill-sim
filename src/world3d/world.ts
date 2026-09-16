@@ -22,7 +22,7 @@ import { ghostify, createHeadframe } from "./buildings.js";
 import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
 import { TruckFleet } from "./trucks.js";
-import { Underground, type StopeUG, FILL_TYPES } from "./underground.js";
+import { Underground, type StopeUG, type FillType, FILL_TYPES } from "./underground.js";
 import { PlantInterior } from "./plantInterior.js";
 import {
   DEFAULT_RECIPE, type Recipe, frictionScale, ucs28Kpa, recipeCostPerM3,
@@ -572,8 +572,46 @@ export class World {
     const r = this.recipeFor(st);
     const ucs = ucs28Kpa(r) * FILL_TYPES[st.fillType].ucsMult;
     const ok = ucs >= st.targetUcsKpa;
-    return `<div class="pSplit"><span>Mix ${(r.solids * 100).toFixed(0)}% · ${r.binderKgPerM3} kg/m³</span><b class="${ok ? "good" : "pLate"}">${ucs.toFixed(0)}/${st.targetUcsKpa} kPa</b></div>
+    const floor = ucs < World.LIQUEFACTION_FLOOR
+      ? `<div class="pWarn">⚠ ${ucs.toFixed(0)} kPa is under the ${World.LIQUEFACTION_FLOOR} kPa liquefaction floor — the fill could flow, not just fail strength.</div>`
+      : "";
+    return `<div class="pSplit"><span>Mix ${(r.solids * 100).toFixed(0)}% · ${r.binderKgPerM3} kg/m³</span><b class="${ok ? "good" : "pLate"}">${ucs.toFixed(0)}/${st.targetUcsKpa} kPa</b></div>${floor}
       <div class="pNote">Tune this stope's mix in the 🧪 Lab.</div>`;
+  }
+
+  // Course guidance: fill below ~100 kPa can liquefy (not just miss strength).
+  static readonly LIQUEFACTION_FLOOR = 100; // kPa
+
+  /** Strength-design basis for a stope: exposure by later mining × safety factor
+   *  explains WHY the target UCS is what it is (course: SF 1.3–2.0). Primaries get
+   *  exposed on more faces when the secondaries around them are mined out. */
+  private designBasis(st: StopeUG): { exposure: string; faces: number; sf: number; inSitu: number } {
+    const sf = st.isPrimary ? 2.0 : st.levelIdx === 0 ? 1.3 : 1.5;
+    const faces = st.isPrimary ? 4 : st.levelIdx === 0 ? 1 : 2;
+    const exposure = st.isPrimary
+      ? "exposed on all sides once its secondaries are mined"
+      : faces === 1 ? "one sidewall exposed" : "sidewall + brow exposed";
+    return { exposure, faces, sf, inSitu: Math.round(st.targetUcsKpa / sf) };
+  }
+
+  /** Is a fill type the right structural choice for this stope? Teaches when each
+   *  fits: HF is for lean secondaries, CAF/PAF are strong primary fills that need
+   *  aggregate (a crusher), paste is the balanced default. The sim's multipliers
+   *  still enforce the consequence if you override the advice. */
+  private fillSuitability(st: StopeUG, ft: FillType): { verdict: "good" | "ok" | "bad"; reason: string } {
+    if (ft.needsAggregate && !this.hasCrusher())
+      return { verdict: "bad", reason: `${ft.short} needs crushed aggregate — build a Crusher plant on the surface first.` };
+    const highDemand = st.isPrimary || st.targetUcsKpa >= 800;
+    if (ft.key === "hydraulic")
+      return highDemand
+        ? { verdict: "bad", reason: `Hydraulic fill can't deliver high early strength — wrong for a ${st.targetUcsKpa} kPa ${st.isPrimary ? "primary" : "stope"}. Save it for lean secondaries.` }
+        : { verdict: "good", reason: `A lean secondary — cheap hydraulic fill is a good fit here.` };
+    if (ft.key === "caf" || ft.key === "paf")
+      return highDemand
+        ? { verdict: "good", reason: `Strong ${ft.short} suits this ${st.isPrimary ? "primary" : "high-strength stope"} — exposed on ${this.designBasis(st).faces} faces later.` }
+        : { verdict: "ok", reason: `${ft.short} is strong but pricey to place — a leaner fill would do on this ${st.targetUcsKpa} kPa secondary.` };
+    // paste
+    return { verdict: "good", reason: `Balanced paste — the dependable default for this stope.` };
   }
 
   private labReadout(): string {
@@ -1230,8 +1268,14 @@ export class World {
     const due = `<span class="${dueLate ? "pLate" : ""}">${dueLate ? "OVERDUE" : "due day " + st.dueDay}</span>`;
     const ft = FILL_TYPES[st.fillType];
     const badge = st.isPrimary ? `<span class="badgePri">PRIMARY</span>` : `<span class="badgeSec">secondary</span>`;
+    const db = this.designBasis(st);
     const meta = `<div class="pMeta">${badge} · ${ft.short} · −${st.depthM} m · ${st.volumeM3.toLocaleString()} m³<br>Static head ρgh: <b>${head.toFixed(1)} MPa</b> · target UCS <b>${st.targetUcsKpa} kPa</b> · ${due}</div>`;
-    const fillPick = `<div class="fillPick">${Object.values(FILL_TYPES).map((f) => `<button class="fillBtn ${st.fillType === f.key ? "on" : ""}" data-act="fill:${f.key}">${f.short}</button>`).join("")}</div><div class="pNote">${ft.note}</div>`;
+    const basis = `<div class="pBasis">Design basis: ${db.exposure} (${db.faces} ${db.faces === 1 ? "face" : "faces"}). In-situ demand ~${db.inSitu} kPa × SF ${db.sf.toFixed(1)} = <b>${st.targetUcsKpa} kPa</b>.</div>`;
+    const suitMark = { good: "✓", ok: "·", bad: "⚠" };
+    const fillPick = `<div class="fillPick">${Object.values(FILL_TYPES).map((f) => {
+      const s = this.fillSuitability(st, f);
+      return `<button class="fillBtn ${st.fillType === f.key ? "on" : ""} suit-${s.verdict}" data-act="fill:${f.key}" title="${s.reason.replace(/"/g, "&quot;")}">${f.short} <i class="suitMark">${suitMark[s.verdict]}</i></button>`;
+    }).join("")}</div><div class="pNote ${this.fillSuitability(st, ft).verdict === "bad" ? "pWarnNote" : ""}">${this.fillSuitability(st, ft).reason}</div>`;
     let body = "";
     if (st.status === "locked") {
       body = !st.isPrimary && !this.underground.primaryCured(st.levelIdx)
@@ -1257,7 +1301,8 @@ export class World {
           <span class="segChk ${c ? (ok ? "ok" : "bad") : ""}">${c ? (ok ? "✓" : "✗") : "·"}</span>
         </div>`;
       }).join("");
-      const canBuild = net.pathCanBuild(idx);
+      const aggBlock = !!ft.needsAggregate && !this.hasCrusher();
+      const canBuild = net.pathCanBuild(idx) && !aggBlock;
       const planned = net.pathPlannedCost(idx);
       const drill = net.canDrill(idx)
         ? `<button class="chkBtn ${net.isDrilled(idx) ? "on" : ""}" data-act="drill:${idx}">${net.isDrilled(idx) ? "☑" : "☐"} Dedicated drilled borehole</button>
@@ -1268,7 +1313,7 @@ export class World {
         ${drill}
         ${this.hglChart(idx)}
         <div class="segList">${rows}</div>
-        <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : "set a valid class on every leg"}</span></button>`;
+        <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : aggBlock ? "PAF needs a Crusher plant on the surface" : "set a valid class on every leg"}</span></button>`;
     } else if (st.status === "piped") {
       const cost = fillCost(st.volumeM3), rev = fillRevenue(st.volumeM3);
       const chk = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="sign:${key}">${on ? "☑" : "☐"} ${label}</button>`;
@@ -1331,7 +1376,7 @@ export class World {
         <div class="pSplit"><span>Hand-back</span><b>${onTime ? "on time" : "late"}</b></div>
         ${st.ucsPass === false ? `<button class="pBtn" data-act="remediate"><b>Remediate &amp; re-pour</b><span>${fmtMoney(2_000_000)} — reset the stope to re-pour</span></button>` : ""}`;
     }
-    this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${body}`);
+    this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${basis}${body}`);
   }
 
   private onPanelAction(act: string) { this.applyPanelAction(act); this.saveGame(); this.checkTutorial(); }
@@ -1371,6 +1416,7 @@ export class World {
     if (act.startsWith("boost:")) { this.underground.net.toggleBooster(act.slice(6)); this.renderStopePanel(); return; }
     if (act === "build") {
       if (st.status !== "available") return;
+      if (FILL_TYPES[st.fillType].needsAggregate && !this.hasCrusher()) { this.hud.setStatus(`${FILL_TYPES[st.fillType].short} needs crushed aggregate — build a Crusher plant on the surface first.`); return; }
       const idx = this.underground.stopes.indexOf(st);
       if (!this.underground.net.pathCanBuild(idx)) { this.hud.setStatus("Every leg needs a class that out-rates its pressure."); return; }
       const planned = this.underground.net.pathPlannedCost(idx);

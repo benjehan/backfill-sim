@@ -16,11 +16,12 @@ import { SCENARIOS, type Scenario } from "./scenarios.js";
 
 export type StopeStatus = "locked" | "available" | "piped" | "pouring" | "curing" | "cured";
 
-export interface FillType { key: string; label: string; short: string; costMult: number; ucsMult: number; rateMult: number; cureMult: number; binderMult: number; reticulated: boolean; note: string; }
+export interface FillType { key: string; label: string; short: string; costMult: number; ucsMult: number; rateMult: number; cureMult: number; binderMult: number; reticulated: boolean; needsAggregate?: boolean; note: string; }
 export const FILL_TYPES: Record<string, FillType> = {
   paste: { key: "paste", label: "Paste fill", short: "Paste", costMult: 1.0, ucsMult: 1.0, rateMult: 1.0, cureMult: 1.0, binderMult: 1.0, reticulated: true, note: "Piped paste. Balanced — needs a full reticulation to the stope." },
   hydraulic: { key: "hydraulic", label: "Hydraulic fill", short: "HF", costMult: 0.7, ucsMult: 0.78, rateMult: 1.15, cureMult: 1.35, binderMult: 0.8, reticulated: true, note: "Cheap, drains slowly (longer cure), lower strength. Good for low-target secondaries." },
-  caf: { key: "caf", label: "Cemented aggregate", short: "CAF", costMult: 0.9, ucsMult: 1.3, rateMult: 0.5, cureMult: 0.9, binderMult: 0.4, reticulated: false, note: "Trucked — no reticulation. Very strong at low binder but slow to place. Good for primaries." },
+  paf: { key: "paf", label: "Paste-aggregate", short: "PAF", costMult: 0.85, ucsMult: 1.5, rateMult: 0.8, cureMult: 0.85, binderMult: 0.55, reticulated: true, needsAggregate: true, note: "Paste with graded aggregate — very strong at modest binder, pumped through a heavier line. Needs a crusher. Premium primaries." },
+  caf: { key: "caf", label: "Cemented aggregate", short: "CAF", costMult: 0.9, ucsMult: 1.3, rateMult: 0.5, cureMult: 0.9, binderMult: 0.4, reticulated: false, needsAggregate: true, note: "Trucked — no reticulation. Very strong at low binder but slow to place. Needs a crusher. Good for primaries." },
 };
 
 export interface StopeUG {

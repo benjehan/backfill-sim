@@ -18,6 +18,7 @@ Legend: ✅ built · 🔨 in progress · ⭐ high-impact next · 💤 later
 - ✅ Reticulation **design**: leg-by-leg pipe classes + chokes, pressure vs rating
 - ✅ Timed **pour** with pressure/plug/flush/burst realism
 - ✅ Economy at mining scale (capex + daily opex + ore-access revenue), board review S–D
+- ✅ Fill-type & stope design: HF/Paste/PAF/CAF per stope, primary/secondary sequencing, strength-design basis (exposure × safety factor, liquefaction floor)
 
 ---
 
@@ -43,10 +44,10 @@ Legend: ✅ built · 🔨 in progress · ⭐ high-impact next · 💤 later
 
 ## 3. Backfill selection & mine design (Modules 02, 03, 07, 08, 09, 19)
 
-- ⭐ **Fill-type choice** per mine/stope: Hydraulic (HF) · Paste (CPB) · Cemented Rock/Aggregate (CRF/CAF) · Paste-Aggregate (PAF) — each with real trade-offs
-- **Stope design**: geometry, exposure, vertical vs sidewall, undercut/adjacent mining
-- **Primary vs secondary stopes**: primaries need high early strength (later exposed on all sides); secondaries can be leaner — sequencing puzzle
-- **Strength design**: target UCS by exposure, safety factor 1.3–2.0, liquefaction floor >100 kPa
+- ✅ **Fill-type choice** per stope: Hydraulic (HF) · Paste · Cemented Aggregate (CAF) · Paste-Aggregate (PAF) — each with real cost/strength/rate/cure/binder trade-offs, plus per-stope suitability advice (HF for lean secondaries; CAF/PAF need a crusher and suit primaries)
+- **Stope design**: geometry, exposure, vertical vs sidewall, undercut/adjacent mining — partial: exposure (faces) now drives the design basis
+- ✅ **Primary vs secondary stopes**: primaries need high early strength (later exposed on all sides); secondaries can be leaner — sequencing puzzle (secondaries locked until the level's primary cures)
+- ✅ **Strength design**: target UCS shown as in-situ demand × safety factor (1.3–2.0) by exposure, with a 100 kPa liquefaction floor warning
 - **Access & development**: drives, cross-cuts, ore passes — where the mine can even reach
 - Mining **sequence & schedule** that backfill must keep pace with ("catch-up mode")
 
