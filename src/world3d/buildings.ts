@@ -122,6 +122,31 @@ export const createRail: Build = (scene, onMesh) =>
     return parts;
   }, onMesh);
 
+// Road haulage depot: a binder silo fed by tanker trucks (low capex, pricier binder).
+export const createHaulage: Build = (scene, onMesh) =>
+  rootOf(scene, "haulage", () => {
+    const parts: Mesh[] = [];
+    const pad = box(scene, "hpad", 16, 0.5, 10, "#4a4640"); pad.position.y = 0.25; parts.push(pad);
+    const silo = cyl(scene, "hsilo", 4, 10, "#d9d2bd", 12); silo.position.set(3, 5.5, 0); parts.push(silo);
+    const cab = box(scene, "htcab", 2.4, 2.2, 2.4, "#c58a2e"); cab.position.set(-5, 1.6, 1.5); parts.push(cab); // tanker
+    const tank = cyl(scene, "htank", 2.4, 6, "#b8bcc2", 12); tank.rotation.z = Math.PI / 2; tank.position.set(-5, 1.9, -1.6); parts.push(tank);
+    return parts;
+  }, onMesh);
+
+// Isotainer pad: stacked dry-binder containers, pneumatically offloaded (remote sites).
+export const createIsotainer: Build = (scene, onMesh) =>
+  rootOf(scene, "isotainer", () => {
+    const parts: Mesh[] = [];
+    const pad = box(scene, "ipad", 12, 0.5, 10, "#4a4640"); pad.position.y = 0.25; parts.push(pad);
+    const cols = ["#3f6653", "#7a6a3f", "#5a4a63"];
+    let i = 0;
+    for (const [x, z, y] of [[-3, -2, 1.4], [-3, 2, 1.4], [0, 0, 1.4], [0, 0, 3.8]] as const) {
+      const c = box(scene, "iso" + i, 5, 2.4, 2.4, cols[i % cols.length]); c.position.set(x, y, z); parts.push(c); i++;
+    }
+    const silo = cyl(scene, "idose", 2.6, 7, "#d9d2bd", 12); silo.position.set(4, 4, 0); parts.push(silo);
+    return parts;
+  }, onMesh);
+
 export const createWaterPump: Build = (scene, onMesh) =>
   rootOf(scene, "waterpump", () => {
     const parts: Mesh[] = [];

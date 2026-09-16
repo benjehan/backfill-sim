@@ -48,6 +48,9 @@ export interface SupplyBuildings {
   millMult: number;   // mill/hoist throughput multiplier from upgrades (1 = base)
   waterMult: number;  // water pump rate multiplier
   binderMult: number; // rail binder delivery multiplier
+  binderSupply: boolean;      // any binder supply mode (rail / haulage / isotainer) is connected
+  binderDeliveryMult: number; // mode delivery rate × any upgrade
+  binderSiloCap: number;      // silo capacity set by the chosen supply mode
   waterInflow: number; // groundwater m³/day into the pond (wet mines) — no pump needed
 }
 
@@ -109,13 +112,16 @@ export class SupplyChain {
       notes.push("ROM pad full — no mill to process ore (no income). Build a Mill.");
     }
 
-    // Binder arrives by rail (and costs money); no rail terminal ⇒ no delivery.
+    // Binder arrives via the chosen supply mode (rail / haulage / isotainer) and costs
+    // money; no binder supply ⇒ no delivery. The mode sets the silo capacity.
     let binderCost = 0;
-    if (b.rail) {
+    if (b.binderSupply) {
+      this.binder.cap = b.binderSiloCap;
+      if (this.binder.level > this.binder.cap) this.binder.level = this.binder.cap; // switching to a smaller silo
       const room = this.binder.cap - this.binder.level;
-      const delivered = Math.min(BINDER_DELIVERY_PER_DAY_ * b.binderMult * binderDeliveryMult * dd, room);
+      const delivered = Math.min(BINDER_DELIVERY_PER_DAY_ * b.binderDeliveryMult * binderDeliveryMult * dd, room);
       this.binder.level += delivered;
-      binderCost = delivered * BINDER_COST_PER_T;
+      binderCost = delivered * BINDER_COST_PER_T; // mode cost multiplier applied by the caller
     }
 
     // Water pumped to the pond; no pump ⇒ the pond only drains.

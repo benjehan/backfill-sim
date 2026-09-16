@@ -504,7 +504,8 @@ export class World {
     const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1);
     const sup = this.supply.tick(dd, this.supplyState(), deliveryMult);
     const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1);
-    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1);
+    const modeCostMult = this.activeBinderMode()?.costMult ?? 1; // haulage/isotainer cost more per tonne
+    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult;
     this.cash += revenue - binderCost;
     this.rp += sup.milledT / 4000; // know-how accrues as ore is processed
     this.millDayIncome = dd > 0 ? revenue / dd : 0; // $/day for the HUD readout
@@ -549,7 +550,7 @@ export class World {
     const avail = this.underground.stopes.find((s) => s.status === "available");
     if (this.day >= 20 && pouring && !this.firedEvents.has("seismic")) this.fireEvent(this.evSeismic(pouring));
     else if (this.day >= 16 && avail && !this.firedEvents.has("geotech")) this.fireEvent(this.evGeotech(avail));
-    else if (this.day >= 12 && !this.firedEvents.has("binder-delay")) this.fireEvent(this.evBinderDelay());
+    else if (this.day >= 12 && !this.firedEvents.has("binder-delay") && this.activeBinderMode()?.type === "rail") this.fireEvent(this.evBinderDelay());
     else if (this.day >= 24 && !this.firedEvents.has("mill-trip")) this.fireEvent(this.evMillTrip());
   }
   private fireEvent(ev: GameEvent) {
@@ -1093,13 +1094,26 @@ export class World {
     if (!b.spec.tsfCap) return 0;
     return Math.round(b.spec.tsfCap * (1 + b.raises * 0.5 * (this.research.has("dameng") ? 1.5 : 1)));
   }
+  /** The connected binder supply with the highest delivery (rail / haulage / isotainer), or null. */
+  private activeBinderMode(): { deliveryMult: number; costMult: number; siloCap: number; reliable: boolean; type: string } | null {
+    let best: { deliveryMult: number; costMult: number; siloCap: number; reliable: boolean; type: string } | null = null;
+    for (const b of this.buildings) {
+      if (!b.built || !b.spec.binder || !this.connected(b)) continue;
+      const upg = b.spec.type === "rail" ? this.tierMult("rail") : 1;
+      const m = { ...b.spec.binder, deliveryMult: b.spec.binder.deliveryMult * upg, type: b.spec.type };
+      if (!best || m.deliveryMult > best.deliveryMult) best = m;
+    }
+    return best;
+  }
   /** Which powered supply buildings exist (and their upgrade multipliers), for the economy tick. */
   private supplyState() {
     const live = (t: string) => this.buildings.some((b) => b.spec.type === t && this.connected(b));
     const tsfCap = this.buildings.reduce((a, b) => a + (b.built ? this.tsfCapOf(b) : 0), 0);
+    const bm = this.activeBinderMode();
     return {
       mill: live("mill"), rail: live("rail"), water: live("waterpump"), tsfCap,
       millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
+      binderSupply: !!bm, binderDeliveryMult: bm?.deliveryMult ?? 0, binderSiloCap: bm?.siloCap ?? this.supply.binder.cap,
       waterInflow: this.scenario.wet?.waterInflow ?? 0,
     };
   }
@@ -1118,7 +1132,7 @@ export class World {
     if (!has("plant")) return step(2, "Build the <b>🏭 Backfill plant</b> on the graded pad.");
     if (!has("mill")) return step(3, "Build a <b>⚙ Mill</b> out on the terrain — it refines ore into cash and makes the tailings you backfill with.");
     if (!has("tsf")) return step(4, "Build a <b>⛰ Tailings dam</b> — only ~half the tailings can go underground; the rest must go to the TSF or the mill chokes.");
-    if (!has("rail")) return step(5, "Build a <b>🚆 Rail terminal</b> — binder is delivered here by rail.");
+    if (!(has("rail") || has("haulage") || has("isotainer"))) return step(5, "Build a <b>binder supply</b> — 🚆 Rail (high throughput, cheap, lead-time risk), 🚛 Road haulage (flexible, pricier), or 📦 Isotainer pad (remote, low capex). Binder is ~70% of your cost.");
     if (!this.scenario.wet && !has("waterpump")) return step(6, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
     const unpowered = this.buildings.filter((b) => b.spec.needsPower && !this.isPowered(b));
     if (unpowered.length) return `<span class="objStep">Power reach</span>${unpowered.length} work(s) out of power range — build a <b>🔌 Substation</b> to relay power out to them.`;
@@ -1139,7 +1153,7 @@ export class World {
       { text: `Now the heart of the operation: build the <b>🏭 Backfill plant</b> on the pad.`, done: () => has("plant") },
       { text: `Cash and fill both come from ore. Build a <b>⚙ Mill</b> out on the terrain near the pad — it refines ore into income and makes the tailings you backfill with.`, done: () => has("mill") },
       { text: `Only ~half the tailings can go back underground. Build a <b>⛰ Tailings dam</b> for the rest, or the mill chokes.`, done: () => has("tsf") },
-      { text: `Cement is delivered by rail. Build a <b>🚆 Rail terminal</b>.`, done: () => has("rail") },
+      { text: `Cement (binder) needs a supply. Pick one: <b>🚆 Rail terminal</b> (high throughput, cheap, but lead-time risk), <b>🚛 Road haulage</b> (flexible, pricier), or <b>📦 Isotainer pad</b> (remote, low capex). Binder is ~70% of your cost.`, done: () => has("rail") || has("haulage") || has("isotainer") },
       { text: `The paste mix needs water — build a <b>💧 Water pump</b>. Watch each work links to the plant: a <b>red line</b> means it's too far to connect.`, done: () => has("waterpump") },
       { text: `The plant is an empty shell — it makes <b>no paste yet</b>. Click the <b>🏭 Backfill plant</b> → <b>Enter plant</b>, then build the process line: place a <b>thickener</b>, a <b>filter</b>, a <b>twin-shaft mixer</b> and a <b>pump</b>, and wire each output to the next input (tailings + water + binder → mixer → pump → shaft). You can't pour paste until the plant produces it.`, done: () => this.plantThroughput > 0 },
       { text: `You're stood up! Press <b>▶</b> in the clock (top-left) to start time running.`, done: () => this.day > 1.15 },
