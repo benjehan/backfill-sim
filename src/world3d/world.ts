@@ -55,7 +55,7 @@ const TECHS: { id: string; name: string; desc: string; cost: number }[] = [
 ];
 const SPEEDS = [1, 2, 4, 8];
 
-interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; }
+interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
 interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
 
@@ -155,6 +155,10 @@ export class World {
         ...this.buildings.map((b) => ({ x: b.pos.x, z: b.pos.z, r: Math.max(b.spec.fw, b.spec.fd) / 2 + 1 })),
         { x: this.portal.x, z: this.portal.z, r: 6 },
       ],
+      () => ({
+        sites: this.buildings.filter((b) => !b.built).map((b) => ({ x: b.pos.x, z: b.pos.z })),
+        focus: this.anyPourActive() ? { x: this.portal.x, z: this.portal.z } : null,
+      }),
     );
     this.fleet = new TruckFleet(this.scene, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
     this.underground = new Underground(this.scene, this.shadow, this.scenario);
@@ -196,7 +200,7 @@ export class World {
     this.engine.runRenderLoop(() => {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
       this.advanceTime(dt);
-      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt); this.updateFlow(dt); }
+      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); }
       this.scene.render();
     });
     window.addEventListener("resize", () => this.engine.resize());
@@ -400,6 +404,7 @@ export class World {
     const prev = this.day;
     this.day += (dt / SECONDS_PER_DAY) * this.speed;
     const dd = this.day - prev;
+    this.updateConstruction(dd);
 
     // timed pours: pressure builds with flow + plug drift; burst if it tops rating
     for (const s of this.underground.stopes) {
@@ -821,11 +826,10 @@ export class World {
     const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type, bi }; });
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
     if (!silent) this.cash -= spec.cost;
-    this.opexPerDay += spec.opexPerDay;
-    const placed: Placed = { spec, root, pos: at, marker: null, raises: 0, tier: 0 };
+    const placed: Placed = { spec, root, pos: at, marker: null, raises: 0, tier: 0, built: false, buildProgress: 0, buildDays: 0, scaffold: null };
     this.buildings.push(placed);
-    if (spec.spawnsWorkers) this.crew.add(spec.spawnsWorkers);
-    if (spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(spec.spawnsTrucks, at, this.portal); }
+    if (silent) this.finishBuild(placed);      // loaded/restored buildings stand complete
+    else this.startConstruction(placed);       // player builds rise over game-time, crewed
     this.drawRoads();
     this.recomputePower();
     this.refreshSupply();
@@ -834,11 +838,80 @@ export class World {
     if (silent) return placed;
     this.sound.build();
     this.saveGame();
-    const disc = spec.supplies && !this.connected(placed) ? " ⚠ Too far from the plant — no feed line reaches it. Resite it closer." : "";
-    this.hud.setStatus(`${spec.label} built.` + disc + (spec.type === "power" ? " It powers everything nearby." : ""));
+    this.hud.setStatus(`${spec.label} — construction started. The crew is on site.`);
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
     return placed;
   }
+
+  // ---- staged construction --------------------------------------------------
+
+  /** Set a building rising: scaffold up, structure scaled down, crew converges. */
+  private startConstruction(b: Placed) {
+    const area = b.spec.fw * b.spec.fd;
+    b.built = false; b.buildProgress = 0;
+    b.buildDays = Math.max(0.5, Math.min(2.2, 0.4 + area / 120)); // bigger footprints take longer
+    b.scaffold = this.makeScaffold(b.pos, b.spec.fw, b.spec.fd);
+    this.applyBuildVisual(b);
+  }
+
+  /** Mark a building finished: full structure, scaffold gone, opex + crews/trucks online. */
+  private finishBuild(b: Placed) {
+    b.built = true; b.buildProgress = 1;
+    b.root.scaling.set(1, 1, 1);
+    if (b.scaffold) { b.scaffold.dispose(); b.scaffold = null; }
+    this.opexPerDay += b.spec.opexPerDay;
+    if (b.spec.spawnsWorkers) this.crew.add(b.spec.spawnsWorkers);
+    if (b.spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(b.spec.spawnsTrucks, b.pos, this.portal); }
+  }
+
+  /** Advance every in-progress build by the elapsed game-days; complete + announce. */
+  private updateConstruction(dd: number) {
+    if (dd <= 0) return;
+    for (const b of this.buildings) {
+      if (b.built) continue;
+      b.buildProgress = Math.min(1, b.buildProgress + dd / b.buildDays);
+      this.applyBuildVisual(b);
+      if (b.buildProgress >= 1) {
+        this.finishBuild(b);
+        this.drawRoads(); this.recomputePower(); this.refreshSupply(); this.refreshObjective(); this.checkTutorial(); this.saveGame();
+        const disc = b.spec.supplies && !this.connected(b) ? " ⚠ Too far from the plant — no feed line reaches it." : "";
+        this.hud.setStatus(`${b.spec.label} complete — now operational.` + disc + (b.spec.type === "power" ? " It powers everything nearby." : ""));
+        this.sound.build();
+      }
+    }
+  }
+
+  /** Grow the structure up from its foundations as it's built; reveal-then-hide scaffold. */
+  private applyBuildVisual(b: Placed) {
+    const p = b.buildProgress;
+    const ease = 1 - Math.pow(1 - p, 2);
+    b.root.scaling.set(1, 0.06 + 0.94 * ease, 1); // rises from the ground
+    if (b.scaffold) b.scaffold.setEnabled(p < 0.999);
+  }
+
+  /** Timber/steel scaffold poles + a top rail around the building footprint. */
+  private makeScaffold(at: Vector3, fw: number, fd: number): TransformNode {
+    const node = new TransformNode("scaffold", this.scene); node.parent = this.surfaceRoot; node.position.copyFrom(at);
+    const m = new StandardMaterial("scaffoldM", this.scene);
+    m.diffuseColor = Color3.FromHexString("#b7935a"); m.specularColor = Color3.Black();
+    const H = 6, hw = fw / 2 + 0.6, hd = fd / 2 + 0.6;
+    const corners: [number, number][] = [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]];
+    for (const [x, z] of corners) {
+      const pole = MeshBuilder.CreateCylinder("spole", { diameter: 0.3, height: H, tessellation: 6 }, this.scene);
+      pole.material = m; pole.position.set(x, heightAt(at.x + x, at.z + z) - at.y + H / 2, z); pole.parent = node;
+      this.shadow.addShadowCaster(pole);
+    }
+    for (const yy of [H * 0.45, H * 0.9]) {
+      for (const [ax, az, len, rotY] of [[0, -hd, hw * 2, 0], [0, hd, hw * 2, 0], [-hw, 0, hd * 2, Math.PI / 2], [hw, 0, hd * 2, Math.PI / 2]] as const) {
+        const rail = MeshBuilder.CreateBox("srail", { width: 0.14, height: 0.14, depth: len }, this.scene);
+        rail.material = m; rail.position.set(ax, yy, az); rail.rotation.y = rotY; rail.parent = node;
+      }
+    }
+    return node;
+  }
+
+  private anyPourActive() { return this.underground.stopes.some((s) => s.status === "pouring"); }
+  private cafPourActive() { return this.underground.stopes.some((s) => s.status === "pouring" && !FILL_TYPES[s.fillType].reticulated); }
 
   /** Cut a flat gravel bench into the sloping terrain under an off-pad structure. */
   private gradePlatform(at: Vector3, fw: number, fd: number) {
@@ -869,8 +942,8 @@ export class World {
   /** Sources that are actually live: the power station(s), plus any substation relay
    *  reachable through a chain of energised sources. */
   private energizedSources(): Placed[] {
-    const roots = this.buildings.filter((b) => b.spec.powerRadius && !b.spec.needsPower);
-    const relays = this.buildings.filter((b) => b.spec.powerRadius && b.spec.needsPower);
+    const roots = this.buildings.filter((b) => b.built && b.spec.powerRadius && !b.spec.needsPower);
+    const relays = this.buildings.filter((b) => b.built && b.spec.powerRadius && b.spec.needsPower);
     const energized = [...roots];
     for (let pass = 0; pass < relays.length + 1; pass++) {
       let added = false;
@@ -929,7 +1002,7 @@ export class World {
       if (fill) { fill.position.y = 1.9 + f * 2.9; fill.setEnabled(f > 0.02); }
     }
   }
-  private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher"); }
+  private hasCrusher() { return this.buildings.some((b) => b.spec.type === "crusher" && b.built); }
   /** Effective power radius including upgrades. */
   private radiusOf(b: Placed) {
     const r = b.spec.powerRadius ?? 0;
@@ -938,7 +1011,8 @@ export class World {
   }
   /** A supply work feeds the plant only if it's powered AND close enough to run a feed line. */
   private connected(b: Placed) {
-    const plant = this.buildings.find((x) => x.spec.type === "plant");
+    if (!b.built) return false;
+    const plant = this.buildings.find((x) => x.spec.type === "plant" && x.built);
     return !!plant && this.isPowered(b) && Vector3.Distance(b.pos, plant.pos) <= CONNECT_RANGE;
   }
   /** Best upgrade multiplier among the connected buildings of a type (1 = base / none). */
@@ -958,7 +1032,7 @@ export class World {
   /** Which powered supply buildings exist (and their upgrade multipliers), for the economy tick. */
   private supplyState() {
     const live = (t: string) => this.buildings.some((b) => b.spec.type === t && this.connected(b));
-    const tsfCap = this.buildings.reduce((a, b) => a + this.tsfCapOf(b), 0);
+    const tsfCap = this.buildings.reduce((a, b) => a + (b.built ? this.tsfCapOf(b) : 0), 0);
     return {
       mill: live("mill"), rail: live("rail"), water: live("waterpump"), tsfCap,
       millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
@@ -1442,7 +1516,7 @@ export class World {
   }
 
   /** Debug/testing hooks. */
-  debugBuild(type: string, x: number, z: number) { const spec = specOf(type); this.place(spec, new Vector3(x, heightAt(x, z), z)); this.disarm(); }
+  debugBuild(type: string, x: number, z: number) { const spec = specOf(type); const b = this.place(spec, new Vector3(x, heightAt(x, z), z)); if (!b.built) { this.finishBuild(b); this.drawRoads(); this.recomputePower(); this.refreshSupply(); } this.disarm(); }
   debugDescend() { this.descend(); }
   debugEnterPlant() { this.enterPlant(); }
   debugSetRecipe(solids: number, binder: number) { this.recipe.solids = solids; this.recipe.binderKgPerM3 = binder; }
