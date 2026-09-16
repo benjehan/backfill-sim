@@ -515,6 +515,7 @@ select, input[type=number] {
 .scDiff { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 2px 8px; border-radius: 6px; margin: 8px 0; background: #2f6b45; color: #cdeed9; }
 .scDiff.hard { background: #6b3030; color: #f0cccc; }
 .scDiff.flooded { background: #2a4a6b; color: #cce0f0; }
+.scDiff.remote { background: #5a4a2a; color: #f0e0c0; }
 .scBlurb { color: var(--muted); font-size: 13px; line-height: 1.5; min-height: 56px; }
 .scStats { font-size: 11px; color: #8fb89e; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .scResume { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 720px; margin: 0 auto 22px;

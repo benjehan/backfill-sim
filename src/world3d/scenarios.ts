@@ -20,6 +20,7 @@ export interface Scenario {
   ucs: { base: number; perLevel: number; primary: number }; // 28-day strength targets
   terrain: TerrainTheme;
   wet?: { dewaterPerDay: number; waterInflow: number }; // flooded mine: $/day to pump out + m³/day groundwater into the pond
+  binder?: { deliveryMult: number; costMult: number };  // remote mine: throttled + pricier cement, pushing you to CAF/HF
 }
 
 export const SCENARIOS: Scenario[] = [
@@ -65,6 +66,21 @@ export const SCENARIOS: Scenario[] = [
     ucs: { base: 560, perLevel: 135, primary: 200 },
     terrain: { gravel: "#6f7378", dirt: "#5a5f52", scrub: "#4e6a4a", hills: "#3d5340", rock: "#6a7078" },
     wet: { dewaterPerDay: 190_000, waterInflow: 16_000 },
+  },
+  {
+    id: "wolfram-reach",
+    name: "Wolfram Reach",
+    blurb: "A remote tungsten mine at the end of the line. Cement barely trickles in and costs a fortune — go easy on the paste, lean on CAF and hydraulic fill.",
+    difficulty: "Remote",
+    startCash: 140_000_000,
+    horizonDays: 58,
+    orebody: 250_000,
+    depths: [200, 350, 500],
+    schedule: [{ a: 1, d: 12 }, { a: 4, d: 18 }, { a: 8, d: 25 }, { a: 12, d: 31 }, { a: 18, d: 41 }, { a: 24, d: 48 }],
+    vol: { base: 6000, sx: 55, depth: 3.4 },
+    ucs: { base: 520, perLevel: 130, primary: 190 },
+    terrain: { gravel: "#7a8088", dirt: "#6a6a62", scrub: "#6a7a6e", hills: "#4f5a54", rock: "#8a9098" },
+    binder: { deliveryMult: 0.45, costMult: 1.7 },
   },
 ];
 

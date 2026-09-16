@@ -445,10 +445,10 @@ export class World {
     }
 
     // surface materials economy: hoist ore, mill it (concentrate income + tailings), route to TSF, deliver binder, pump water
-    const deliveryMult = this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1;
+    const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1);
     const sup = this.supply.tick(dd, this.supplyState(), deliveryMult);
     const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1);
-    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1);
+    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1);
     this.cash += revenue - binderCost;
     this.rp += sup.milledT / 4000; // know-how accrues as ore is processed
     this.millDayIncome = dd > 0 ? revenue / dd : 0; // $/day for the HUD readout
