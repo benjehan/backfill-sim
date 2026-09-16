@@ -572,3 +572,54 @@ select, input[type=number] {
 .optBtn:hover { border-color: var(--accent); }
 .optBtn b { display: block; font-size: 14px; }
 .optBtn span { font-size: 12px; color: var(--muted); }
+
+/* ===================== UI polish pass (2026-09-16) ===================== */
+:root { --glass: rgba(12,20,28,.80); --glassLine: #34526690; --rad: 10px; --shadow: 0 6px 22px rgba(0,0,0,.38); }
+.worldHud { font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+
+/* brand */
+.whBrand { font-size: 19px; }
+
+/* clock cluster → one cohesive control bar */
+.whClock { top: 46px; left: 18px; gap: 4px; align-items: center; background: var(--glass); border: 1px solid var(--glassLine);
+  border-radius: 12px; padding: 5px 8px; box-shadow: var(--shadow); backdrop-filter: blur(4px); }
+.whDay { background: none; border: none; box-shadow: none; padding: 3px 8px 3px 2px; color: #eaf2f8; min-width: 54px; }
+.whSpd { background: rgba(255,255,255,.05); border: 1px solid transparent; border-radius: 7px; padding: 5px 9px; min-width: 30px;
+  color: #cfe0ec; transition: background .12s, border-color .12s, box-shadow .12s, transform .1s; }
+.whSpd:hover { background: rgba(255,255,255,.12); border-color: var(--glassLine); }
+.whSpd:active { transform: translateY(1px); }
+.whSpd.on { background: var(--accent); color: #10202b; border-color: var(--accent); font-weight: 700; box-shadow: 0 0 12px #ffb02055; }
+
+/* schedule strip sits just under the clock bar */
+.whSched { top: 88px; border: 1px solid var(--glassLine); box-shadow: var(--shadow); border-radius: var(--rad); }
+
+/* econ stats — consistent glass cards */
+.whEcon { top: 16px; gap: 8px; }
+.whStat { background: var(--glass); border-color: var(--glassLine); border-radius: var(--rad); box-shadow: var(--shadow); padding: 7px 13px; }
+.whStat b { font-variant-numeric: tabular-nums; }
+
+/* resource panel */
+.whRes { top: 96px; background: var(--glass); border-color: var(--glassLine); border-radius: var(--rad); box-shadow: var(--shadow); }
+.resFill, .binderFill { box-shadow: 0 0 6px currentColor; }
+
+/* mode toggle + status + hint */
+.whMode { border-radius: 10px; box-shadow: var(--shadow); transition: background .12s, color .12s, transform .1s; }
+.whMode:active { transform: translateX(-50%) translateY(1px); }
+.whStatus { background: var(--glass); border-color: var(--glassLine); border-radius: var(--rad); box-shadow: var(--shadow); }
+.whHint { background: var(--glass); border: 1px solid var(--glassLine); box-shadow: var(--shadow); }
+
+/* build palette — cards that lift on hover */
+.whPalette { background: var(--glass); border-color: var(--glassLine); box-shadow: 0 8px 26px rgba(0,0,0,.45); padding: 9px 10px; gap: 7px; }
+.palBtn { background: rgba(255,255,255,.045); border-color: var(--glassLine); border-radius: 10px;
+  transition: transform .12s, border-color .12s, background .12s; }
+.palBtn:hover { transform: translateY(-3px); background: rgba(255,255,255,.10); border-color: var(--accent); }
+
+/* side panels + buttons */
+.whPanel { border-color: var(--glassLine); border-radius: 12px; box-shadow: 0 10px 34px rgba(0,0,0,.5); }
+.pBtn { transition: transform .1s, border-color .12s, filter .12s; }
+.pBtn:hover:not([disabled]) { transform: translateY(-1px); }
+.pBtn.primary:hover:not([disabled]) { filter: brightness(1.08); }
+.segMini { transition: background .12s, border-color .12s; }
+
+/* result / event / intro cards */
+.whResult, .whEvent { box-shadow: 0 14px 44px rgba(0,0,0,.55); }

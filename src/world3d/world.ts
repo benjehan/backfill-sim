@@ -43,6 +43,7 @@ import { writeSave, clearSave, SAVE_VERSION } from "./savegame.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
+const CONNECT_RANGE = 130; // max feed-line reach from a supply work to the plant
 // Research tree — permanent campaign perks bought with RP earned from milling + cured stopes.
 const TECHS: { id: string; name: string; desc: string; cost: number }[] = [
   { id: "recovery", name: "High-recovery flotation", desc: "+15% mill income", cost: 12 },
@@ -103,7 +104,7 @@ export class World {
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
   private supplyLinkMeshes: Mesh[] = [];
-  private flowLinks: { src: Placed; a: Vector3; c: Vector3; beads: Mesh[]; lift: number }[] = [];
+  private flowLinks: { src: Placed; a: Vector3; c: Vector3; beads: Mesh[]; lift: number; needsConnect: boolean }[] = [];
   private flowPhase = 0;
   private oreHoistAt = new Vector3(-67, 7, -10); // headframe discharge — ore conveyed to the mill
   private activeEvent: GameEvent | null = null;
@@ -786,7 +787,8 @@ export class World {
     if (silent) return placed;
     this.sound.build();
     this.saveGame();
-    this.hud.setStatus(`${spec.label} built.` + (spec.type === "power" ? " It powers everything nearby." : ""));
+    const disc = spec.supplies && !this.connected(placed) ? " ⚠ Too far from the plant — no feed line reaches it. Resite it closer." : "";
+    this.hud.setStatus(`${spec.label} built.` + disc + (spec.type === "power" ? " It powers everything nearby." : ""));
     if (this.cash >= spec.cost) this.arm(spec); else this.disarm();
     return placed;
   }
@@ -887,11 +889,16 @@ export class World {
     const step = b.spec.upgrade?.stat === "power" ? b.spec.upgrade.step : 0;
     return r * (1 + b.tier * step);
   }
-  /** Best upgrade multiplier among the powered buildings of a type (1 = base / none). */
+  /** A supply work feeds the plant only if it's powered AND close enough to run a feed line. */
+  private connected(b: Placed) {
+    const plant = this.buildings.find((x) => x.spec.type === "plant");
+    return !!plant && this.isPowered(b) && Vector3.Distance(b.pos, plant.pos) <= CONNECT_RANGE;
+  }
+  /** Best upgrade multiplier among the connected buildings of a type (1 = base / none). */
   private tierMult(type: string) {
     let best = 1;
     for (const b of this.buildings) {
-      if (b.spec.type !== type || !this.isPowered(b) || !b.spec.upgrade) continue;
+      if (b.spec.type !== type || !this.connected(b) || !b.spec.upgrade) continue;
       best = Math.max(best, 1 + b.tier * b.spec.upgrade.step);
     }
     return best;
@@ -903,10 +910,10 @@ export class World {
   }
   /** Which powered supply buildings exist (and their upgrade multipliers), for the economy tick. */
   private supplyState() {
-    const powered = (t: string) => this.buildings.some((b) => b.spec.type === t && this.isPowered(b));
+    const live = (t: string) => this.buildings.some((b) => b.spec.type === t && this.connected(b));
     const tsfCap = this.buildings.reduce((a, b) => a + this.tsfCapOf(b), 0);
     return {
-      mill: powered("mill"), rail: powered("rail"), water: powered("waterpump"), tsfCap,
+      mill: live("mill"), rail: live("rail"), water: live("waterpump"), tsfCap,
       millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
       waterInflow: this.scenario.wet?.waterInflow ?? 0,
     };
@@ -930,6 +937,8 @@ export class World {
     if (!this.scenario.wet && !has("waterpump")) return step(6, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
     const unpowered = this.buildings.filter((b) => b.spec.needsPower && !this.isPowered(b));
     if (unpowered.length) return `<span class="objStep">Power reach</span>${unpowered.length} work(s) out of power range — build a <b>🔌 Substation</b> to relay power out to them.`;
+    const disconnected = this.buildings.filter((b) => b.spec.supplies && this.isPowered(b) && !this.connected(b));
+    if (disconnected.length) return `<span class="objStep">Connect</span>${disconnected.length} supply work(s) can't reach the plant (red line) — resite them within feed-line range.`;
     return `<span class="objStep">Ready</span>You're set. Press <b>▶</b> to run time, then <b>⛏ go underground</b> to reticulate and pour.`;
   }
   private refreshObjective() { this.hud.setObjective(this.mode === "surface" ? this.nextObjective() : null); }
@@ -949,7 +958,7 @@ export class World {
 
   /** Build one supply link (pipe for slurry/liquids, conveyor belt for the mill→plant line),
    *  with support posts and travelling flow beads that animate while the source is live. */
-  private makeLink(src: Placed, a: Vector3, c: Vector3, hex: string, kind: "pipe" | "conveyor", dia: number) {
+  private makeLink(src: Placed, a: Vector3, c: Vector3, hex: string, kind: "pipe" | "conveyor", dia: number, needsConnect = false) {
     const dir = c.subtract(a); const len = dir.length(); if (len < 1) return;
     const nd = dir.normalizeToNew();
     if (kind === "pipe") {
@@ -984,7 +993,7 @@ export class World {
       bead.material = bmat; bead.parent = this.surfaceRoot; bead.isPickable = false; bead.setEnabled(false);
       beads.push(bead); this.supplyLinkMeshes.push(bead);
     }
-    this.flowLinks.push({ src, a, c, beads, lift: kind === "conveyor" ? 0.6 : 0 });
+    this.flowLinks.push({ src, a, c, beads, lift: kind === "conveyor" ? 0.6 : 0, needsConnect });
   }
 
   /** Draw the surface reticulation: mill→plant conveyor + feed pipes to the plant,
@@ -998,9 +1007,11 @@ export class World {
     const plant = this.buildings.find((b) => b.spec.type === "plant");
     if (plant) for (const b of this.buildings) {
       const mat = b.spec.supplies; if (!mat) continue;
-      // mill's tailings ride a conveyor belt to the plant; binder/water are piped
+      // mill's tailings ride a conveyor belt to the plant; binder/water are piped.
+      // a work out of feed-line reach shows a red, dead line (it supplies nothing).
       const kind = b.spec.type === "mill" ? "conveyor" : "pipe";
-      this.makeLink(b, at(b, 6), at(plant, 6), colFor[mat], kind, diaFor[mat]);
+      const col = this.connected(b) ? colFor[mat] : "#ff5a5a";
+      this.makeLink(b, at(b, 6), at(plant, 6), col, kind, diaFor[mat], true);
     }
     const mill = this.buildings.find((b) => b.spec.type === "mill");
     // headframe → mill: ore conveyor bringing hoisted ROM ore to be refined
@@ -1018,7 +1029,7 @@ export class World {
   private updateFlow(dt: number) {
     this.flowPhase += dt * this.speed;
     for (const link of this.flowLinks) {
-      const active = !this.paused && !this.ended && this.isPowered(link.src);
+      const active = !this.paused && !this.ended && (link.needsConnect ? this.connected(link.src) : this.isPowered(link.src));
       const n = link.beads.length;
       for (let i = 0; i < n; i++) {
         const bead = link.beads[i];
