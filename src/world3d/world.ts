@@ -29,7 +29,7 @@ import {
   yieldStressPa, frictionKpaPerM, pumpability, ucsVariance,
 } from "./labModel.js";
 import {
-  fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, PASTE_COST_PER_M3,
+  fmtMoney, fillCost, fillRevenue, CHOKE_CAPEX, staticHeadMpa, frictionMpa, PASTE_COST_PER_M3,
   pourPressureMpa, BURST_PENALTY,
   SECONDS_PER_DAY, POUR_RATE_M3_PER_DAY, LATE_COST_PER_DAY, BASE_OPEX_PER_DAY, CURE_DAYS,
   BINDER_TOPUP_TONNES, BINDER_TOPUP_COST,
@@ -69,6 +69,7 @@ const INRUSH_PENALTY = 1_800_000;
 const BAR_RISE_K = 360;   // kPa per unit flow-factor while the plug is unset
 const BAR_HEAD_K = 220;   // kPa fluid head, scaled by fill fraction, pre-plug-set
 const PLUG_SET_FRAC = 0.12; // the plug is placed over the first ~12% of fill
+const SURFACE_UNIT_M = 7.5; // world units → metres for the surface pipe run (plant → shaft)
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
@@ -1009,7 +1010,17 @@ export class World {
     return energized;
   }
 
+  /** The surface pipe run from the plant to the shaft collar costs friction head:
+   *  a plant sited far from the shaft forces stronger pipe (or pumps) on every leg.
+   *  Site it near the collar to preserve the gravity head (course Module 03/11). */
+  plantSurfaceRunM(): number {
+    const plant = this.buildings.find((b) => b.spec.type === "plant" && b.built);
+    return plant ? Vector3.Distance(plant.pos, this.portal) * SURFACE_UNIT_M : 0;
+  }
+  private recomputePlantHead() { this.underground.net.setSurfaceHead(frictionMpa(this.plantSurfaceRunM())); }
+
   private recomputePower() {
+    this.recomputePlantHead();
     this.energized = this.energizedSources();
     this.powered = 0;
     for (const b of this.buildings) {
@@ -1436,7 +1447,13 @@ export class World {
         ? `<button class="chkBtn ${net.isDrilled(idx) ? "on" : ""}" data-act="drill:${idx}">${net.isDrilled(idx) ? "☑" : "☐"} Dedicated drilled borehole</button>
            <div class="pNote">${net.isDrilled(idx) ? "Sinking a dedicated hole to this stope — short line, less friction, but a steep drilling capex." : "This far stope rides the long shared level run. Drill a dedicated borehole for a shorter, cheaper, safer line."}</div>`
         : "";
+      const surfM = this.plantSurfaceRunM();
+      const surfMpa = frictionMpa(surfM);
+      const surfNote = surfMpa > 0.6
+        ? `<div class="pWarn">⚠ Plant sited ${Math.round(surfM)} m from the shaft — that surface run adds <b>${surfMpa.toFixed(1)} MPa</b> to every leg. Site the plant nearer the collar to save pipe.</div>`
+        : `<div class="pNote">Plant→shaft surface run: ${Math.round(surfM)} m (+${surfMpa.toFixed(1)} MPa/leg). Sited close — good gravity head.</div>`;
       body = `${fillPick}${this.recipeSummary(st)}
+        ${surfNote}
         <div class="pNote">Design each leg: pick a class that out-rates its pressure. A borehole ⌇ choke sheds head (cheaper deep pipe); a level ⇪ booster pours faster but the line must hold more. Legs are shared between stopes.</div>
         ${drill}
         ${this.hglChart(idx)}

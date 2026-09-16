@@ -132,15 +132,19 @@ export class Reticulation {
     }
     return false;
   }
+  /** Extra pressure every leg must carry from the surface run plant→shaft (siting). */
+  surfaceHeadMpa = 0;
+  setSurfaceHead(mpa: number) { this.surfaceHeadMpa = Math.max(0, mpa); }
+
   /** Pressure this leg must hold. Drilled legs use their own hole's choke; boosters add driving pressure. */
   pressureMpa(seg: Segment): number {
     const boost = this.boostedUpstream(seg) ? BOOST_PRESSURE : 0;
     if (seg.id.startsWith("DB")) {
       const db = this.byId.get("DB" + seg.id.replace(/^DBr?/, ""))!; // the drilled hole for this leg
       const head = staticHeadMpa(this.depths[seg.levelIdx]) * (db.choke ? CHOKE_HEAD_RELIEF : 1);
-      return head + frictionMpa(seg.cumLenM) + SURGE_MPA + boost;
+      return head + frictionMpa(seg.cumLenM) + SURGE_MPA + boost + this.surfaceHeadMpa;
     }
-    return this.effHeadMpa(seg.levelIdx) + frictionMpa(seg.cumLenM) + SURGE_MPA + boost;
+    return this.effHeadMpa(seg.levelIdx) + frictionMpa(seg.cumLenM) + SURGE_MPA + boost + this.surfaceHeadMpa;
   }
   /** Does the stope's path carry a booster (→ faster pour)? */
   pathHasBooster(stopeIdx: number): boolean { return this.pathFor(stopeIdx).some((s) => s.kind === "level" && s.booster); }
