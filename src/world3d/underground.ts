@@ -56,6 +56,7 @@ export interface StopeUG {
   isPrimary: boolean;
   levelIdx: number;
   fillType: string;
+  devUntil?: number;   // day a paid early-development drive completes (0/undef = not developing)
   barricadeRisk?: boolean;
   // barricade design (containment — GDD 09/10): type + optional relief/exclusion/instrumentation
   barricadeType?: "mullock" | "shotcrete";
@@ -169,7 +170,7 @@ export class Underground {
       ucsAchievedKpa: s.ucsAchievedKpa, ucsPass: s.ucsPass, ucs7Kpa: s.ucs7Kpa ?? 0, ucs7Reported: !!s.ucs7Reported,
       signBarricade: !!s.signBarricade, signPourNote: !!s.signPourNote, signLowStart: !!s.signLowStart,
       clsId: s.cls?.id ?? null, choke: s.choke, lineBoost: s.lineBoost, lengthM: s.lengthM,
-      barricadeRisk: !!s.barricadeRisk, recipe: s.recipe ?? null,
+      barricadeRisk: !!s.barricadeRisk, recipe: s.recipe ?? null, devUntil: s.devUntil ?? 0,
       barricadeType: s.barricadeType ?? null, barricadeRelief: !!s.barricadeRelief,
       exclusionZone: !!s.exclusionZone, barricadeInstr: !!s.barricadeInstr,
     }));
@@ -181,7 +182,7 @@ export class Underground {
       s.ucsAchievedKpa = d.ucsAchievedKpa; s.ucsPass = d.ucsPass; s.ucs7Kpa = d.ucs7Kpa; s.ucs7Reported = d.ucs7Reported;
       s.signBarricade = d.signBarricade; s.signPourNote = d.signPourNote; s.signLowStart = d.signLowStart;
       s.cls = d.clsId == null ? null : PIPE_CLASSES[d.clsId]; s.choke = d.choke; s.lineBoost = d.lineBoost;
-      s.lengthM = d.lengthM; s.barricadeRisk = d.barricadeRisk; s.recipe = d.recipe ?? undefined;
+      s.lengthM = d.lengthM; s.barricadeRisk = d.barricadeRisk; s.recipe = d.recipe ?? undefined; s.devUntil = d.devUntil ?? 0;
       s.barricadeType = d.barricadeType ?? undefined; s.barricadeRelief = d.barricadeRelief;
       s.exclusionZone = d.exclusionZone; s.barricadeInstr = d.barricadeInstr;
       this.paint(s, day);
@@ -231,7 +232,9 @@ export class Underground {
   updateSchedule(day: number): { newlyAvailable: StopeUG[]; newlyCured: StopeUG[]; overdue: StopeUG[] } {
     const newlyAvailable: StopeUG[] = [], newlyCured: StopeUG[] = [], overdue: StopeUG[] = [];
     for (const s of this.stopes) {
-      if (s.status === "locked" && day >= s.availableDay && (s.isPrimary || this.primaryCured(s.levelIdx))) { s.status = "available"; newlyAvailable.push(s); }
+      const seqOk = s.isPrimary || this.primaryCured(s.levelIdx);
+      // opens on the mine schedule OR when a paid development drive finishes (whichever first)
+      if (s.status === "locked" && seqOk && (day >= s.availableDay || (s.devUntil && day >= s.devUntil))) { s.status = "available"; s.devUntil = 0; newlyAvailable.push(s); }
       if (s.status === "curing" && day - s.cureStartDay >= this.cureDaysFor(s)) { s.status = "cured"; newlyCured.push(s); }
       if ((s.status === "available" || s.status === "piped") && day > s.dueDay) overdue.push(s);
       this.paint(s, day);

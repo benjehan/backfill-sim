@@ -1174,6 +1174,8 @@ export class World {
     const daysEarly = Math.max(0, Math.ceil(s.availableDay - this.day));
     return DEV_BASE + DEV_PER_DAY * daysEarly;
   }
+  /** How long an access drive takes — deeper levels take longer to reach. */
+  private devDays(s: StopeUG): number { return 2 + s.levelIdx; }
 
   /** Barricade capacity (kPa it can hold) from its type + optional relief. */
   private barricadeCap(s: StopeUG): number {
@@ -1654,11 +1656,15 @@ export class World {
     if (st.status === "locked") {
       const seqOk = st.isPrimary || this.underground.primaryCured(st.levelIdx);
       const daysEarly = Math.max(0, Math.ceil(st.availableDay - this.day));
+      const developing = !!st.devUntil && this.day < st.devUntil;
+      const devPct = developing ? Math.max(0, Math.min(100, (1 - (st.devUntil! - this.day) / this.devDays(st)) * 100)) : 0;
       body = !seqOk
         ? `<div class="pRow muted">Secondary stope — mining waits until the level's <b>primary</b> is filled and cured.</div>`
-        : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`
-          + (daysEarly > 0 ? `<div class="pNote">Ahead of the plan? Pay to drive access and extract the void now — keep the plant fed.</div>
-             <button class="pBtn primary" data-act="develop"><b>⛏ Develop access early</b><span>open the void ${daysEarly} d early · ${fmtMoney(this.developCost(st))}</span></button>` : "");
+        : developing
+          ? `<div class="pRow"><b class="cap">⛏ Access drive underway</b></div><div class="pBar"><div class="pBarFill" style="width:${devPct}%"></div></div><div class="pRow muted">void ready ~day ${Math.round(st.devUntil!)}</div>`
+          : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`
+            + (daysEarly > 0 ? `<div class="pNote">Ahead of the plan? Pay to drive access and extract the void now — keep the plant fed.</div>
+             <button class="pBtn primary" data-act="develop"><b>⛏ Develop access early</b><span>open the void ~${this.devDays(st)} d (vs day ${st.availableDay}) · ${fmtMoney(this.developCost(st))}</span></button>` : "");
     } else if (st.status === "available" && !ft.reticulated) {
       const canCaf = this.hasCrusher();
       body = `${fillPick}${this.recipeSummary(st)}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;
@@ -1819,14 +1825,13 @@ export class World {
     }
     if (act === "develop") {
       if (st.status !== "locked") return;
+      if (st.devUntil && this.day < st.devUntil) return; // drive already underway
       if (!(st.isPrimary || this.underground.primaryCured(st.levelIdx))) { this.hud.setStatus("Secondary — the level's primary must be filled and cured first."); return; }
       const cost = this.developCost(st);
       if (this.cash < cost) { this.hud.setStatus(`Not enough cash to develop ${st.id} (${fmtMoney(cost)}).`); return; }
-      this.cash -= cost; st.availableDay = Math.floor(this.day);
-      const ev = this.underground.updateSchedule(this.day); // flips it to available now
-      let ore = 0; for (const s of ev.newlyAvailable) ore += this.grantExtractionOre(s);
-      this.updateEconomy(); this.refreshSchedule(); this.renderStopePanel(); this.saveGame();
-      this.hud.setStatus(`${st.id} developed — access driven, ${Math.round(ore).toLocaleString()} t ore mucked, void ready to reticulate (${fmtMoney(cost)}).`);
+      this.cash -= cost; st.devUntil = Math.floor(this.day) + this.devDays(st); // an access drive that takes days
+      this.updateEconomy(); this.renderStopePanel(); this.saveGame();
+      this.hud.setStatus(`${st.id} development started — access drive underway, void ready ~day ${Math.round(st.devUntil)} (${fmtMoney(cost)}).`);
       return;
     }
     if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
