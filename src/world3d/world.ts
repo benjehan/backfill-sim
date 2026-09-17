@@ -135,6 +135,7 @@ export class World {
   private ended = false;
   private opexPerDay = 0;
   private safetyIncidents = 0;
+  private phase: "explore" | "setup" | "operate" = "explore"; // clock only runs in "operate"
   private testWorkDone = false; // a paid lab campaign that de-risks mix design (tightens UCS scatter)
   private lastGrade = "";
   private sound = new SoundKit();
@@ -236,8 +237,17 @@ export class World {
       onSelect: (t) => this.onSelect(t),
       onToggleMode: () => this.toggleMode(),
       onPanelAction: (a) => this.onPanelAction(a),
-      onPause: () => { this.paused = !this.paused; this.refreshClock(); },
-      onSpeed: (i) => { this.speedIdx = i; this.paused = false; this.refreshClock(); },
+      onPause: () => {
+        if (this.phase === "explore") { this.hud.setStatus("Delineate the orebody first — open 🧭 Geology."); return; }
+        if (this.phase === "setup") { this.startOperations(); return; }
+        this.paused = !this.paused; this.refreshClock();
+      },
+      onSpeed: (i) => {
+        if (this.phase === "explore") { this.hud.setStatus("Delineate the orebody first — open 🧭 Geology."); return; }
+        this.speedIdx = i;
+        if (this.phase === "setup") { this.startOperations(); return; }
+        this.paused = false; this.refreshClock();
+      },
       onLab: () => { const r = this.activeRecipe(); this.hud.setLabRecipe(r.solids, r.binderKgPerM3); this.hud.toggleLab(this.labReadout()); },
       onRecipe: (solids, binder) => { const r = this.activeRecipe(); r.solids = solids; r.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); if (this.mode === "underground" && this.selectedStope) this.renderStopePanel(); },
       onBinderTopup: () => {
@@ -574,7 +584,7 @@ export class World {
   // ---- live clock -----------------------------------------------------------
 
   private advanceTime(dt: number) {
-    if (this.paused || this.ended || this.activeEvent) return;
+    if (this.paused || this.ended || this.activeEvent || this.phase !== "operate") return; // time only runs in the Operate phase
     const prev = this.day;
     this.day += (dt / SECONDS_PER_DAY) * this.speed;
     const dd = this.day - prev;
@@ -908,7 +918,7 @@ export class World {
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
       oreConfidence: this.oreConfidence, explored: this.explored, drillHoles: this.drillHoles, weather: this.weather, weatherUntil: this.weatherUntil,
-      millGrind: this.millGrind, millRecovery: this.millRecovery,
+      millGrind: this.millGrind, millRecovery: this.millRecovery, phase: this.phase,
       staff: this.staff,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
@@ -947,6 +957,7 @@ export class World {
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.drillHoles = s.drillHoles ?? 0; for (let i = 1; i <= this.drillHoles; i++) this.spawnDrillHole(i);
     this.millGrind = s.millGrind ?? 1; this.millRecovery = s.millRecovery ?? 1;
+    this.phase = s.phase ?? "operate"; this.hud.setPhase(this.phase === "operate" ? "▶ Operating" : this.phase === "setup" ? "◑ Set up" : "◐ Explore");
     this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
     if (s.staff) for (const k of Object.keys(this.staff)) if (s.staff[k]) this.staff[k] = s.staff[k];
     this.underground.weatherCureMult = this.weather === "heat" ? 0.85 : this.weather === "cold" ? 1.18 : 1;
@@ -1191,7 +1202,17 @@ export class World {
     const known = this.explored && this.oreConfidence >= 0.7;
     for (const s of this.underground.stopes) s.gradeKnown = known;
     this.underground.refreshVisuals(this.day);
+    if (known && this.phase === "explore") { // exploration done → move to the untimed Set-up phase
+      this.phase = "setup"; this.hud.setPhase("◑ Set up");
+      this.hud.setStatus("Orebody delineated. Set up your operation — it's untimed. Press ▶ to begin operations when ready.");
+    }
     this.refreshObjective(); // exploration is objective step 1 — advance once delineated
+  }
+  /** Leave the untimed Set-up phase and start the operating clock. */
+  private startOperations() {
+    this.phase = "operate"; this.paused = false; this.hud.setPhase("▶ Operating");
+    this.refreshClock(); this.refreshObjective();
+    this.hud.setStatus("Operations underway — the clock is now running. Fill stopes before their due dates.");
   }
   private grantExtractionOre(s: StopeUG): number {
     const want = s.volumeM3 * EXTRACT_ORE_PER_M3 * s.grade; // richer stopes yield more ore/revenue
@@ -2003,7 +2024,7 @@ export class World {
   debugUpgrade(type: string) { const b = this.buildings.find((x) => x.spec.type === type); if (b) { this.selectedBuilding = b; this.upgradeBuilding(); this.selectedBuilding = null; } }
   /** Drive the tutorial through every step to verify the gating advances. */
   debugTutTest() {
-    this.testWorkDone = true;
+    this.testWorkDone = true; this.phase = "operate";
     const L = (s: string) => console.log("TUT|" + s + ` step=${this.tutStep + 1}/${this.tutSteps.length}`);
     L("start");
     this.runSurvey(); this.drillCampaign(); this.drillCampaign(); this.checkTutorial(); L("delineated"); // exploration-first step
@@ -2016,7 +2037,7 @@ export class World {
   }
   /** Build a partial campaign and leave it autosaved (for save/resume testing). */
   debugSeed() {
-    this.testWorkDone = true;
+    this.testWorkDone = true; this.phase = "operate";
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
     this.debugBuildPlantLine(); this.debugUpgrade("mill"); this.descend();
     for (let k = 0; k < 8 && !this.ended; k++) {
@@ -2039,7 +2060,7 @@ export class World {
   /** Headless self-play: stand up the chain, then reticulate + pour every stope as it frees up,
    *  logging the economy each week. Drives the REAL game loop (not a projection). #autorun triggers it. */
   debugAutoRun() {
-    this.testWorkDone = true;
+    this.testWorkDone = true; this.phase = "operate";
     const L = (s: string) => console.log("AUTORUN|" + s);
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
@@ -2078,7 +2099,7 @@ export class World {
   /** Headless SKILLED self-play: pumpable-yet-strong mix, over-rated uniform lines with chokes,
    *  reinforce on geotech, raise the dam before it chokes the mill. Proves the game rewards skill. */
   debugSmartRun() {
-    this.testWorkDone = true;
+    this.testWorkDone = true; this.phase = "operate";
     const L = (s: string) => console.log("SMARTRUN|" + s);
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
