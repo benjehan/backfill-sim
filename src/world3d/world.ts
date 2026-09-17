@@ -384,7 +384,7 @@ export class World {
     if (this.explored) return;
     if (this.cash < SURVEY_COST) { this.hud.setStatus(`Not enough cash for a survey (${fmtMoney(SURVEY_COST)}).`); return; }
     this.cash -= SURVEY_COST; this.explored = true; this.oreConfidence = Math.max(this.oreConfidence, 0.55);
-    this.updateEconomy(); this.saveGame();
+    this.refreshGradeKnowledge(); this.updateEconomy(); this.saveGame();
     this.hud.setStatus(`Geophysical survey complete — grade revealed (~$${MILL_NET_PER_T}/t), orebody delineation started.`);
   }
   /** Plant a visible drill rig on the exploration ground (off to the side of the pad). */
@@ -406,7 +406,7 @@ export class World {
     const find = Math.round(DRILL_FIND_BASE * (1 - this.oreConfidence)); // diminishing returns toward full confidence
     this.oreConfidence = Math.min(1, this.oreConfidence + DRILL_CONF);
     this.supply.oreReserve.level += find; this.supply.oreReserve.cap += find;
-    this.updateEconomy(); this.saveGame();
+    this.refreshGradeKnowledge(); this.updateEconomy(); this.saveGame();
     this.hud.setStatus(`Drill campaign — confidence ${Math.round(this.oreConfidence * 100)}%, +${find.toLocaleString()} t reserve delineated.`);
   }
 
@@ -1178,8 +1178,15 @@ export class World {
 
   /** Mucking a newly-opened stope moves its ore from the reserve onto the ROM pad
    *  (a burst to mill) — net-neutral on total ore, capped by pad room. Extraction → ore → void. */
+  /** Delineation reveals each stope's grade once the orebody is Indicated (drilled). */
+  private refreshGradeKnowledge() {
+    const known = this.explored && this.oreConfidence >= 0.7;
+    for (const s of this.underground.stopes) s.gradeKnown = known;
+    this.underground.refreshVisuals(this.day);
+    this.refreshObjective(); // exploration is objective step 1 — advance once delineated
+  }
   private grantExtractionOre(s: StopeUG): number {
-    const want = s.volumeM3 * EXTRACT_ORE_PER_M3;
+    const want = s.volumeM3 * EXTRACT_ORE_PER_M3 * s.grade; // richer stopes yield more ore/revenue
     const take = Math.min(want, this.supply.oreReserve.level, this.supply.ore.cap - this.supply.ore.level);
     if (take > 0) { this.supply.oreReserve.level -= take; this.supply.ore.level += take; }
     return take;
@@ -1363,14 +1370,16 @@ export class World {
   /** The next thing the player needs to build to stand up the operation, or null when set. */
   private nextObjective(): string | null {
     const has = (t: string) => this.buildings.some((b) => b.spec.type === t);
-    const T = this.scenario.wet ? 5 : 6; // wet mines get their water free from groundwater
+    const T = this.scenario.wet ? 6 : 7; // wet mines get their water free from groundwater
     const step = (n: number, body: string) => `<span class="objStep">Setup ${n}/${T}</span>${body}`;
-    if (!has("power")) return step(1, "Build a <b>⚡ Power station</b> — everything on site runs on power.");
-    if (!has("plant")) return step(2, "Build the <b>🏭 Backfill plant</b> on the graded pad.");
-    if (!has("mill")) return step(3, "Build a <b>⚙ Mill</b> out on the terrain — it refines ore into cash and makes the tailings you backfill with.");
-    if (!has("tsf")) return step(4, "Build a <b>⛰ Tailings dam</b> — only ~half the tailings can go underground; the rest must go to the TSF or the mill chokes.");
-    if (!(has("rail") || has("haulage") || has("isotainer"))) return step(5, "Build a <b>binder supply</b> — 🚆 Rail (high throughput, cheap, lead-time risk), 🚛 Road haulage (flexible, pricier), or 📦 Isotainer pad (remote, low capex). Binder is ~70% of your cost.");
-    if (!this.scenario.wet && !has("waterpump")) return step(6, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
+    // 1) Explore & delineate the orebody FIRST — know the ground before you commit capital.
+    if (!this.explored || this.oreConfidence < 0.7) return step(1, "Explore first: open <b>🧭 Geology</b> — run a survey and drill to delineate the orebody (Indicated). Know where the ore is before you build.");
+    if (!has("power")) return step(2, "Build a <b>⚡ Power station</b> — everything on site runs on power.");
+    if (!has("plant")) return step(3, "Build the <b>🏭 Backfill plant</b> on the graded pad.");
+    if (!has("mill")) return step(4, "Build a <b>⚙ Mill</b> out on the terrain — it refines ore into cash and makes the tailings you backfill with.");
+    if (!has("tsf")) return step(5, "Build a <b>⛰ Tailings dam</b> — only ~half the tailings can go underground; the rest must go to the TSF or the mill chokes.");
+    if (!(has("rail") || has("haulage") || has("isotainer"))) return step(6, "Build a <b>binder supply</b> — 🚆 Rail (high throughput, cheap, lead-time risk), 🚛 Road haulage (flexible, pricier), or 📦 Isotainer pad (remote, low capex). Binder is ~70% of your cost.");
+    if (!this.scenario.wet && !has("waterpump")) return step(7, "Build a <b>💧 Water pump</b> — the paste mix needs water.");
     const unpowered = this.buildings.filter((b) => b.spec.needsPower && !this.isPowered(b));
     if (unpowered.length) return `<span class="objStep">Power reach</span>${unpowered.length} work(s) out of power range — build a <b>🔌 Substation</b> to relay power out to them.`;
     const disconnected = this.buildings.filter((b) => b.spec.supplies && this.isPowered(b) && !this.connected(b));
@@ -1673,13 +1682,16 @@ export class World {
       const daysEarly = Math.max(0, Math.ceil(st.availableDay - this.day));
       const developing = !!st.devUntil && this.day < st.devUntil;
       const devPct = developing ? Math.max(0, Math.min(100, (1 - (st.devUntil! - this.day) / this.devDays(st)) * 100)) : 0;
-      body = !seqOk
+      const gradeLine = st.gradeKnown
+        ? `<div class="pSplit"><span>Ore grade</span><b class="${st.grade >= 1 ? "good" : ""}">${st.grade.toFixed(2)}× (${st.grade >= 1.1 ? "rich" : st.grade <= 0.9 ? "lean" : "average"})</b></div>`
+        : `<div class="pRow muted">Ore grade unknown — drill in 🧭 Geology to delineate it.</div>`;
+      body = gradeLine + (!seqOk
         ? `<div class="pRow muted">Secondary stope — mining waits until the level's <b>primary</b> is filled and cured.</div>`
         : developing
           ? `<div class="pRow"><b class="cap">⛏ Access drive underway</b></div><div class="pBar"><div class="pBarFill" style="width:${devPct}%"></div></div><div class="pRow muted">void ready ~day ${Math.round(st.devUntil!)}</div>`
           : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`
             + (daysEarly > 0 ? `<div class="pNote">Ahead of the plan? Pay to drive access and extract the void now — keep the plant fed.</div>
-             <button class="pBtn primary" data-act="develop"><b>⛏ Develop access early</b><span>open the void ~${this.devDays(st)} d (vs day ${st.availableDay}) · ${fmtMoney(this.developCost(st))}</span></button>` : "");
+             <button class="pBtn primary" data-act="develop"><b>⛏ Develop access early</b><span>open the void ~${this.devDays(st)} d (vs day ${st.availableDay}) · ${fmtMoney(this.developCost(st))}</span></button>` : ""));
     } else if (st.status === "available" && !ft.reticulated) {
       const canCaf = this.hasCrusher();
       body = `${fillPick}${this.recipeSummary(st)}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;

@@ -56,6 +56,8 @@ export interface StopeUG {
   isPrimary: boolean;
   levelIdx: number;
   fillType: string;
+  grade: number;       // ore richness (~0.75–1.25, orebody averages ~1.0); scales extraction value
+  gradeKnown?: boolean; // revealed once the orebody is delineated enough (drilling)
   devUntil?: number;   // day a paid early-development drive completes (0/undef = not developing)
   barricadeRisk?: boolean;
   // barricade design (containment — GDD 09/10): type + optional relief/exclusion/instrumentation
@@ -153,13 +155,15 @@ export class Underground {
           flowFactor: 1, pressureMpa: 0, plugDrift: 0,
           targetUcsKpa: sc.ucs.base + levelIdx * sc.ucs.perLevel + (isPrimary ? sc.ucs.primary : 0), // primaries carry higher targets
           ucsAchievedKpa: 0, ucsPass: null,
-          isPrimary, levelIdx, fillType: "paste", barricadeKpa: 0, barricadeOver: 0, plugSet: 0,
+          isPrimary, levelIdx, fillType: "paste", grade: 1, barricadeKpa: 0, barricadeOver: 0, plugSet: 0,
         });
       }
     }
+    const fract = (x: number) => { const s = Math.sin(x) * 43758.5453; return s - Math.floor(s); };
     this.stopes.forEach((s, i) => {
       s.id = `S${i + 1}`; s.mesh.metadata = { stopeId: s.id };
       s.availableDay = sc.schedule[i].a; s.dueDay = sc.schedule[i].d;
+      s.grade = +(0.75 + fract((i + 1) * 127.1) * 0.5).toFixed(2); // rich/lean zones, orebody avg ~1.0
     });
   }
 
@@ -171,6 +175,7 @@ export class Underground {
       signBarricade: !!s.signBarricade, signPourNote: !!s.signPourNote, signLowStart: !!s.signLowStart,
       clsId: s.cls?.id ?? null, choke: s.choke, lineBoost: s.lineBoost, lengthM: s.lengthM,
       barricadeRisk: !!s.barricadeRisk, recipe: s.recipe ?? null, devUntil: s.devUntil ?? 0,
+      grade: s.grade, gradeKnown: !!s.gradeKnown,
       barricadeType: s.barricadeType ?? null, barricadeRelief: !!s.barricadeRelief,
       exclusionZone: !!s.exclusionZone, barricadeInstr: !!s.barricadeInstr,
     }));
@@ -183,6 +188,7 @@ export class Underground {
       s.signBarricade = d.signBarricade; s.signPourNote = d.signPourNote; s.signLowStart = d.signLowStart;
       s.cls = d.clsId == null ? null : PIPE_CLASSES[d.clsId]; s.choke = d.choke; s.lineBoost = d.lineBoost;
       s.lengthM = d.lengthM; s.barricadeRisk = d.barricadeRisk; s.recipe = d.recipe ?? undefined; s.devUntil = d.devUntil ?? 0;
+      if (d.grade != null) s.grade = d.grade; s.gradeKnown = !!d.gradeKnown;
       s.barricadeType = d.barricadeType ?? undefined; s.barricadeRelief = d.barricadeRelief;
       s.exclusionZone = d.exclusionZone; s.barricadeInstr = d.barricadeInstr;
       this.paint(s, day);
@@ -242,13 +248,22 @@ export class Underground {
     return { newlyAvailable, newlyCured, overdue };
   }
 
+  /** Repaint all chambers (e.g. after drilling reveals grades). */
+  refreshVisuals(day: number) { for (const s of this.stopes) this.paint(s, day); }
+
   private paint(s: StopeUG, day: number) {
     const m = s.mesh.material as StandardMaterial;
     // Locked = still solid ore in the ground (opaque, ore-flecked); developed = an
     // open void (translucent) you can see the fill rise inside. Extraction = ore → void.
     if (s.status === "locked") {
-      m.diffuseColor = Color3.FromHexString("#5c4a30"); // unmined ore/rock
-      m.emissiveColor = Color3.FromHexString("#191307");
+      if (s.gradeKnown) { // delineated ore — tint lean-pale → rich-gold by grade
+        const t = Math.max(0, Math.min(1, (s.grade - 0.75) / 0.5));
+        m.diffuseColor = Color3.Lerp(Color3.FromHexString("#6f6550"), Color3.FromHexString("#d4a93a"), t);
+        m.emissiveColor = Color3.FromHexString("#2a2008").scale(t);
+      } else { // undelineated — grey unknown ground
+        m.diffuseColor = Color3.FromHexString("#55524a");
+        m.emissiveColor = Color3.FromHexString("#191307");
+      }
       m.alpha = 1;
     } else if (s.status === "pouring") {
       m.alpha = 0.32;
