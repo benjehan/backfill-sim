@@ -200,7 +200,8 @@ export class Underground {
   }
 
   cureFactor = 1; // research (rapid-set binder) shortens cures
-  cureDaysFor(s: StopeUG) { return CURE_DAYS * FILL_TYPES[s.fillType].cureMult * this.cureFactor; }
+  weatherCureMult = 1; // climate: heat speeds cure (<1), cold slows it (>1)
+  cureDaysFor(s: StopeUG) { return CURE_DAYS * FILL_TYPES[s.fillType].cureMult * this.cureFactor * this.weatherCureMult; }
   primaryCured(levelIdx: number) { return this.stopes.some((x) => x.levelIdx === levelIdx && x.isPrimary && x.status === "cured"); }
 
   cureProgress(stope: StopeUG, day: number): number {

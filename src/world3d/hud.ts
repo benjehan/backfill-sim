@@ -55,6 +55,7 @@ export class Hud {
       <div class="whBrand">BACKFILL <span>TYCOON</span> <em id="whMine">· Wheal Verity</em></div>
       <div class="whClock">
         <div class="whDay" id="whDay">Day 1</div>
+        <div class="whWeather" id="whWeather" title="weather">☀ Clear</div>
         <button class="whSpd" id="whPause">⏸</button>
         ${SPEED_LABELS.map((l, i) => `<button class="whSpd" data-spd="${i}">${l}</button>`).join("")}
         <button class="whSpd whLab" id="whLab">🧪 Lab</button>
@@ -166,6 +167,11 @@ export class Hud {
     this.dayEl.textContent = `Day ${Math.floor(day)}`;
     this.pauseBtn.classList.toggle("on", paused);
     this.speedBtns.forEach((b, i) => b.classList.toggle("on", !paused && i === speedIdx));
+  }
+  private weatherEl?: HTMLElement;
+  setWeather(label: string) {
+    this.weatherEl ??= this.rootEl.querySelector("#whWeather") as HTMLElement;
+    if (this.weatherEl) this.weatherEl.textContent = label;
   }
 
   setSchedule(c: { locked: number; available: number; piped: number; pouring: number; curing: number; cured: number }, day: number, horizon: number) {

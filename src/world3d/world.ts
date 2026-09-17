@@ -79,6 +79,10 @@ const DRILL_DAYS = 2;            // drilling takes rig time
 const DRILL_CONF = 0.12;         // confidence gained per campaign
 const DRILL_FIND_BASE = 34_000;  // reserve delineated/extended per campaign (diminishes toward full confidence)
 
+// Deterministic noise so weather (which touches the economy) is stable across save/resume.
+function pseudoNoise(x: number): number { const s = Math.sin(x * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
+type Weather = "clear" | "rain" | "storm" | "heat" | "cold";
+
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
 interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
@@ -130,6 +134,8 @@ export class World {
   private envBreachActive = false;
   private oreConfidence = 0.5; // how well the orebody is delineated (0.5 inferred → 1.0 measured)
   private explored = false;    // a geophysical survey has been run (grade revealed)
+  private weather: Weather = "clear";
+  private weatherUntil = 0;    // day the current weather spell ends
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
@@ -482,6 +488,10 @@ export class World {
     this.day += (dt / SECONDS_PER_DAY) * this.speed;
     const dd = this.day - prev;
     this.updateConstruction(dd);
+    this.updateWeather();
+    // rain fills the pond for free; heat evaporates it (arid mines feel this)
+    if (this.weather === "rain") this.supply.water.level = Math.min(this.supply.water.cap, this.supply.water.level + 2600 * dd);
+    else if (this.weather === "heat") this.supply.water.level = Math.max(0, this.supply.water.level - 1400 * dd);
 
     // timed pours: pressure builds with flow + plug drift; burst if it tops rating
     for (const s of this.underground.stopes) {
@@ -803,7 +813,7 @@ export class World {
       day: this.day, speedIdx: this.speedIdx, cash: this.cash, opexPerDay: this.opexPerDay,
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
-      oreConfidence: this.oreConfidence, explored: this.explored,
+      oreConfidence: this.oreConfidence, explored: this.explored, weather: this.weather, weatherUntil: this.weatherUntil,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
       plantThroughput: this.plantThroughput,
@@ -839,6 +849,9 @@ export class World {
     this.rp = s.rp || 0; this.research = new Set(s.research || []); this.opexMult = s.opexMult ?? 1;
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
+    this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
+    this.underground.weatherCureMult = this.weather === "heat" ? 0.85 : this.weather === "cold" ? 1.18 : 1;
+    this.hud.setWeather(this.weatherLabel());
     this.tempDeliveryMult = s.tempDeliveryMult ?? 1; this.tempDeliveryUntil = s.tempDeliveryUntil ?? 0;
     this.tempPourMult = s.tempPourMult ?? 1; this.tempPourUntil = s.tempPourUntil ?? 0;
     this.plantThroughput = s.plantThroughput ?? this.plantThroughput;
@@ -1032,6 +1045,30 @@ export class World {
     return node;
   }
 
+  // ---- weather & climate (Epic E) -------------------------------------------
+  /** Roll a new weather spell when the current one ends; drives cure + economy. */
+  private updateWeather() {
+    if (this.day < this.weatherUntil) return;
+    const c = this.scenario.climate;
+    let w: Weather = c?.cold ? "cold" : "clear";
+    if (c) {
+      const roll = pseudoNoise(Math.floor(this.day) * 3.7 + 11);
+      if (roll < c.storm) w = "storm";
+      else if (roll < c.storm + c.rain) w = "rain";
+      else if (roll < c.storm + c.rain + c.heat) w = "heat";
+    }
+    this.weather = w;
+    this.weatherUntil = this.day + 1 + pseudoNoise(this.day * 1.3) * 2.5; // 1–3.5 day spells
+    this.underground.weatherCureMult = w === "heat" ? 0.85 : w === "cold" ? 1.18 : 1;
+    this.hud.setWeather(this.weatherLabel());
+  }
+  private weatherLabel(): string {
+    const m: Record<Weather, string> = { clear: "☀ Clear", rain: "🌧 Rain", storm: "⛈ Storm", heat: "🔥 Heat", cold: "❄ Cold" };
+    return m[this.weather] + (this.scenario.climate ? ` · ${this.scenario.climate.label}` : "");
+  }
+  /** Rain wets stockpiles and storms halt work — a throughput drag on the mill. */
+  private weatherMillMult() { return this.weather === "storm" ? 0.7 : this.weather === "rain" ? 0.9 : 1; }
+
   private anyPourActive() { return this.underground.stopes.some((s) => s.status === "pouring"); }
   private cafPourActive() { return this.underground.stopes.some((s) => s.status === "pouring" && !FILL_TYPES[s.fillType].reticulated); }
 
@@ -1204,7 +1241,7 @@ export class World {
     const bm = this.activeBinderMode();
     return {
       mill: live("mill"), rail: live("rail"), water: live("waterpump"), tsfCap,
-      millMult: this.tierMult("mill"), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
+      millMult: this.tierMult("mill") * this.weatherMillMult(), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
       binderSupply: !!bm, binderDeliveryMult: bm?.deliveryMult ?? 0, binderSiloCap: bm?.siloCap ?? this.supply.binder.cap,
       waterInflow: this.scenario.wet?.waterInflow ?? 0,
     };
