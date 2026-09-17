@@ -1420,7 +1420,8 @@ export class World {
     const has = (t: string) => this.buildings.some((b) => b.spec.type === t);
     const stopeAt = (...st: string[]) => this.underground.stopes.some((s) => st.includes(s.status));
     this.tutSteps = [
-      { text: `Welcome to <b>Wheal Verity</b>. First, power the site — click <b>⚡ Power station</b> in the palette below, then click the graded pad to place it.`, done: () => has("power") },
+      { text: `Welcome to <b>Wheal Verity</b>. Before you spend a penny, know the ground. Open <b>🧭 Geology</b> (top bar), run a <b>Geophysical survey</b>, then <b>Drill</b> to delineate the orebody (Inferred → Indicated). You'll see the rigs go up and the ore grades reveal.`, done: () => this.explored && this.oreConfidence >= 0.7 },
+      { text: `Delineated — now stand the site up. Power everything: place a <b>⚡ Power station</b> on the graded pad.`, done: () => has("power") },
       { text: `Now the heart of the operation: build the <b>🏭 Backfill plant</b> on the pad.`, done: () => has("plant") },
       { text: `Cash and fill both come from ore. Build a <b>⚙ Mill</b> out on the terrain near the pad — it refines ore into income and makes the tailings you backfill with.`, done: () => has("mill") },
       { text: `Only ~half the tailings can go back underground. Build a <b>⛰ Tailings dam</b> for the rest, or the mill chokes.`, done: () => has("tsf") },
@@ -2005,6 +2006,7 @@ export class World {
     this.testWorkDone = true;
     const L = (s: string) => console.log("TUT|" + s + ` step=${this.tutStep + 1}/${this.tutSteps.length}`);
     L("start");
+    this.runSurvey(); this.drillCampaign(); this.drillCampaign(); this.checkTutorial(); L("delineated"); // exploration-first step
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) { this.debugBuild(t, x, z); L(`built ${t}`); }
     this.debugBuildPlantLine(); this.checkTutorial(); L("plant line built");
     this.debugAdvance(2); this.checkTutorial(); L("pressed play");
