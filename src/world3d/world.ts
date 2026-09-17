@@ -149,6 +149,7 @@ export class World {
   private envBreachActive = false;
   private oreConfidence = 0.5; // how well the orebody is delineated (0.5 inferred → 1.0 measured)
   private explored = false;    // a geophysical survey has been run (grade revealed)
+  private drillHoles = 0;      // drill campaigns run — each plants a visible rig on the exploration ground
   private weather: Weather = "clear";
   private weatherUntil = 0;    // day the current weather spell ends
   // staffing: headcount + competency (0..1) per role; starts as a lean, half-trained crew
@@ -369,6 +370,7 @@ export class World {
       <div class="pBar"><div class="pBarFill ${this.oreConfidence >= 0.85 ? "green" : "amber"}" style="width:${conf}%"></div></div>
       <div class="pSplit"><span>Reserve (in ground / total)</span><b>${reserve} / ${cap} t</b></div>
       <div class="pSplit"><span>Grade</span><b>${grade}</b></div>
+      <div class="pSplit"><span>Drill holes</span><b>${this.drillHoles}</b></div>
       <button class="pBtn ${this.explored ? "" : "primary"}" data-act="survey" ${this.explored ? "disabled" : ""}><b>Geophysical survey</b><span>${this.explored ? "already surveyed" : `reveal grade + first delineation · ${fmtMoney(SURVEY_COST)}`}</span></button>
       <button class="pBtn ${full ? "" : "primary"}" data-act="drill" ${full ? "disabled" : ""}><b>Drill campaign</b><span>${full ? "orebody fully delineated (Measured)" : `+confidence, +reserve · ${fmtMoney(DRILL_COST)} · +${DRILL_DAYS} d`}</span></button>
       <button class="pBtn" id="geoClose"><b>Close ▶</b></button>
@@ -385,10 +387,22 @@ export class World {
     this.updateEconomy(); this.saveGame();
     this.hud.setStatus(`Geophysical survey complete — grade revealed (~$${MILL_NET_PER_T}/t), orebody delineation started.`);
   }
+  /** Plant a visible drill rig on the exploration ground (off to the side of the pad). */
+  private spawnDrillHole(i: number) {
+    const cx = -78, cz = 34; // exploration ground, clear of the plant pad
+    const a = pseudoNoise(i * 1.7) * Math.PI * 2, d = 6 + pseudoNoise(i * 2.3) * 42;
+    const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d, y = heightAt(x, z);
+    const mat = new StandardMaterial("dhm" + i, this.scene);
+    mat.diffuseColor = Color3.FromHexString("#c9a24b"); mat.specularColor = Color3.Black();
+    const rig = MeshBuilder.CreateCylinder("drillhole" + i, { diameter: 0.5, height: 5, tessellation: 6 }, this.scene);
+    rig.material = mat; rig.position.set(x, y + 2.4, z); rig.parent = this.surfaceRoot; this.shadow.addShadowCaster(rig);
+    const collar = MeshBuilder.CreateBox("dhc" + i, { width: 1.4, height: 0.4, depth: 1.4 }, this.scene);
+    collar.material = mat; collar.position.set(x, y + 0.2, z); collar.parent = this.surfaceRoot;
+  }
   private drillCampaign() {
     if (this.oreConfidence >= 0.99) { this.hud.setStatus("Orebody already fully delineated (Measured)."); return; }
     if (this.cash < DRILL_COST) { this.hud.setStatus(`Not enough cash to drill (${fmtMoney(DRILL_COST)}).`); return; }
-    this.cash -= DRILL_COST; this.day += DRILL_DAYS;
+    this.cash -= DRILL_COST; this.day += DRILL_DAYS; this.drillHoles++; this.spawnDrillHole(this.drillHoles);
     const find = Math.round(DRILL_FIND_BASE * (1 - this.oreConfidence)); // diminishing returns toward full confidence
     this.oreConfidence = Math.min(1, this.oreConfidence + DRILL_CONF);
     this.supply.oreReserve.level += find; this.supply.oreReserve.cap += find;
@@ -887,7 +901,7 @@ export class World {
       day: this.day, speedIdx: this.speedIdx, cash: this.cash, opexPerDay: this.opexPerDay,
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
-      oreConfidence: this.oreConfidence, explored: this.explored, weather: this.weather, weatherUntil: this.weatherUntil,
+      oreConfidence: this.oreConfidence, explored: this.explored, drillHoles: this.drillHoles, weather: this.weather, weatherUntil: this.weatherUntil,
       staff: this.staff,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
@@ -924,6 +938,7 @@ export class World {
     this.rp = s.rp || 0; this.research = new Set(s.research || []); this.opexMult = s.opexMult ?? 1;
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
+    this.drillHoles = s.drillHoles ?? 0; for (let i = 1; i <= this.drillHoles; i++) this.spawnDrillHole(i);
     this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
     if (s.staff) for (const k of Object.keys(this.staff)) if (s.staff[k]) this.staff[k] = s.staff[k];
     this.underground.weatherCureMult = this.weather === "heat" ? 0.85 : this.weather === "cold" ? 1.18 : 1;
