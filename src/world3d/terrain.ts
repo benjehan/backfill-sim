@@ -13,20 +13,39 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 export const TERRAIN_SIZE = 240;
 export const PAD_RADIUS = 48; // flat build area around the origin
 
-// Per-scenario terrain relief (set at campaign start): <1 = low wetlands, >1 = rugged.
+// Per-scenario terrain relief + land type (set at campaign start).
+export type LandType = "hills" | "mountains" | "seaside" | "valley" | "desert";
+export const SEA_LEVEL = -1.2; // seaside/wet water plane height
 let RELIEF = 1;
+let LAND: LandType = "hills";
 export function setRelief(m: number) { RELIEF = m; }
+export function setLand(l: LandType) { LAND = l; }
 
-/** Surface height at world (x,z). Flat within the build pad, rolling hills beyond. */
+/** Surface height at world (x,z). Flat within the build pad, biome-shaped beyond. */
 export function heightAt(x: number, z: number): number {
-  const hills =
+  const base =
     Math.sin(x * 0.045) * Math.cos(z * 0.05) * 5 +
     Math.sin(x * 0.11 + 1.3) * Math.cos(z * 0.09 + 0.4) * 2.2 +
     Math.sin((x + z) * 0.02) * 3;
   const d = Math.hypot(x, z);
-  // ramp from flat (0) at the pad edge up to full hills further out
+  let h = base;
+  switch (LAND) {
+    case "mountains": // tall, sharp peaks rising away from the pad
+      h = base * 1.4 + Math.max(0, d - 70) * 0.28 + Math.abs(Math.sin(x * 0.03) * Math.sin(z * 0.028)) * 14;
+      break;
+    case "desert": // gentle long dunes, low relief
+      h = Math.sin(x * 0.03) * Math.cos(z * 0.024) * 3 + Math.sin((x - z) * 0.05) * 1.4;
+      break;
+    case "valley": // a valley through the middle, ridges to the sides (in x)
+      h = base * 0.5 + Math.max(0, Math.abs(x) - 60) * 0.32;
+      break;
+    case "seaside": // land slopes down to a sea on the +z edge
+      h = base * 0.8 - Math.max(0, z - 30) * 0.14;
+      break;
+  }
+  // ramp from flat (0) at the pad edge up to full terrain further out
   const flat = 1 - Math.min(1, Math.max(0, (d - PAD_RADIUS) / 55));
-  return hills * (1 - flat) * RELIEF;
+  return h * (1 - flat) * RELIEF;
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
