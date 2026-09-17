@@ -17,7 +17,7 @@ import "@babylonjs/core/Culling/ray";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 
-import { createTerrain, heightAt, PAD_RADIUS, TERRAIN_SIZE } from "./terrain.js";
+import { createTerrain, heightAt, setRelief, PAD_RADIUS, TERRAIN_SIZE } from "./terrain.js";
 import { ghostify, createHeadframe } from "./buildings.js";
 import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
@@ -204,7 +204,9 @@ export class World {
     this.setupLights();
 
     this.surfaceRoot = new TransformNode("surface", this.scene);
+    setRelief(this.scenario.relief ?? 1); // terrain ruggedness varies by mine (set before terrain + placements)
     this.ground = createTerrain(this.scene, this.scenario.terrain); this.ground.parent = this.surfaceRoot;
+    if (this.scenario.wet) this.addWaterPlane(); // low-lying wet ground → standing water across the site
     this.portal = this.createPortal();
     this.crew = new WorkerCrew(
       this.scene, 5, PAD_RADIUS - 6, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot,
@@ -1252,6 +1254,16 @@ export class World {
       if (!added) break;
     }
     return energized;
+  }
+
+  /** Standing water across the low wetland ground (wet mines) — sits below the pad,
+   *  pooling in the terrain lows around the site. */
+  private addWaterPlane() {
+    const w = MeshBuilder.CreateGround("wetwater", { width: TERRAIN_SIZE, height: TERRAIN_SIZE }, this.scene);
+    const m = new StandardMaterial("wetwaterM", this.scene);
+    m.diffuseColor = Color3.FromHexString("#2d5a7a"); m.emissiveColor = Color3.FromHexString("#0f2a3a");
+    m.specularColor = Color3.FromHexString("#4a7a9a"); m.alpha = 0.55;
+    w.material = m; w.position.y = -0.3; w.parent = this.surfaceRoot; w.isPickable = false; w.receiveShadows = false;
   }
 
   /** The surface pipe run from the plant to the shaft collar costs friction head:

@@ -13,6 +13,10 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 export const TERRAIN_SIZE = 240;
 export const PAD_RADIUS = 48; // flat build area around the origin
 
+// Per-scenario terrain relief (set at campaign start): <1 = low wetlands, >1 = rugged.
+let RELIEF = 1;
+export function setRelief(m: number) { RELIEF = m; }
+
 /** Surface height at world (x,z). Flat within the build pad, rolling hills beyond. */
 export function heightAt(x: number, z: number): number {
   const hills =
@@ -22,7 +26,7 @@ export function heightAt(x: number, z: number): number {
   const d = Math.hypot(x, z);
   // ramp from flat (0) at the pad edge up to full hills further out
   const flat = 1 - Math.min(1, Math.max(0, (d - PAD_RADIUS) / 55));
-  return hills * (1 - flat);
+  return hills * (1 - flat) * RELIEF;
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;

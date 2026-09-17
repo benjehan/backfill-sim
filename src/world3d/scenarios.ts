@@ -23,6 +23,7 @@ export interface Scenario {
   binder?: { deliveryMult: number; costMult: number };  // remote mine: throttled + pricier cement, pushing you to CAF/HF
   mineralogy?: { label: string; note: string; varianceAdd: number; latePenalty: number; reactive?: boolean }; // tailings risk revealed by test-work; reactive ⇒ reject needs a controlled (lined) slurry facility
   climate?: { label: string; rain: number; storm: number; heat: number; cold?: boolean }; // per-roll weather probabilities; cold ⇒ baseline slow cure
+  relief?: number; // terrain ruggedness multiplier (<1 low wetlands, >1 rugged); default 1
 }
 
 export const SCENARIOS: Scenario[] = [
@@ -41,6 +42,7 @@ export const SCENARIOS: Scenario[] = [
     terrain: { gravel: "#8f8578", dirt: "#7c6b4c", scrub: "#6f8a4e", hills: "#516d3c", rock: "#948a7a" },
     mineralogy: { label: "Clean tin tailings", note: "low sulphide, predictable — a forgiving material", varianceAdd: 0, latePenalty: 0.03 },
     climate: { label: "Temperate", rain: 0.3, storm: 0.05, heat: 0 },
+    relief: 1.0,
   },
   {
     id: "deepstar-deeps",
@@ -57,6 +59,7 @@ export const SCENARIOS: Scenario[] = [
     terrain: { gravel: "#9a8e78", dirt: "#8a6f4a", scrub: "#9a8f5a", hills: "#6e6a42", rock: "#a89876" },
     mineralogy: { label: "Sulphidic (pyrite)", note: "sulphide oxidation → internal sulphate attack; delayed strength loss unless you design for it. PAG reject needs containment", varianceAdd: 0.02, latePenalty: 0.14, reactive: true },
     climate: { label: "Arid", rain: 0.05, storm: 0.05, heat: 0.35 },
+    relief: 1.6,
   },
   {
     id: "drowned-level",
@@ -74,6 +77,7 @@ export const SCENARIOS: Scenario[] = [
     wet: { dewaterPerDay: 190_000, waterInflow: 16_000 },
     mineralogy: { label: "Clay-rich", note: "high water demand & swelling clays — variable rheology, harder to control", varianceAdd: 0.06, latePenalty: 0.04 },
     climate: { label: "Tropical (wet)", rain: 0.5, storm: 0.15, heat: 0.05 },
+    relief: 0.5,
   },
   {
     id: "wolfram-reach",
@@ -91,6 +95,7 @@ export const SCENARIOS: Scenario[] = [
     binder: { deliveryMult: 0.45, costMult: 1.7 },
     mineralogy: { label: "Variable tungsten tails", note: "inconsistent PSD run to run — variance is the enemy; consistently bad beats highly variable. Reagent-bearing reject needs containment", varianceAdd: 0.05, latePenalty: 0.06, reactive: true },
     climate: { label: "Cold &amp; remote", rain: 0.2, storm: 0.2, heat: 0, cold: true },
+    relief: 1.9,
   },
 ];
 
