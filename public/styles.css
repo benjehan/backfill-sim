@@ -507,7 +507,7 @@ select, input[type=number] {
 .resReuse { font-size: 9.5px; color: var(--green); text-align: right; margin: -2px 0 2px; }
 
 /* build-objective banner — guides the player through standing up the operation */
-.whObjective { position: absolute; left: 50%; bottom: 168px; transform: translateX(-50%);
+.whObjective { position: absolute; left: 50%; bottom: 205px; transform: translateX(-50%);
   background: rgba(18,30,22,.86); border: 1px solid #2f6b45; border-left: 4px solid #39d98a; border-radius: 8px;
   padding: 8px 16px; max-width: 560px; text-align: center; backdrop-filter: blur(3px); pointer-events: none;
   font-size: 13px; color: #dff3e6; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
@@ -645,7 +645,7 @@ select, input[type=number] {
 .whResult, .whEvent { box-shadow: 0 14px 44px rgba(0,0,0,.55); }
 
 /* guided tutorial overlay */
-.whTutorial { position: absolute; left: 50%; bottom: 170px; transform: translateX(-50%); width: 520px; max-width: 92vw;
+.whTutorial { position: absolute; left: 50%; bottom: 205px; transform: translateX(-50%); width: 520px; max-width: 92vw;
   background: rgba(14,26,20,.92); border: 1px solid #2f6b45; border-left: 4px solid #39d98a; border-radius: 12px;
   padding: 12px 18px; text-align: center; pointer-events: auto; backdrop-filter: blur(4px); box-shadow: 0 12px 40px rgba(0,0,0,.55); }
 .tutHead { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #7be0a6; margin-bottom: 5px; }

@@ -55,7 +55,7 @@ export const fillCost = (volumeM3: number) => Math.round(volumeM3 * PASTE_COST_P
 export const fillRevenue = (volumeM3: number) => Math.round(volumeM3 * ORE_VALUE_PER_M3);
 
 // ---- live-game constants ---------------------------------------------------
-export const SECONDS_PER_DAY = 2.6;     // real seconds per game day at 1x
+export const SECONDS_PER_DAY = 5.5;     // real seconds per game day at 1x (calmer pace; use 2/4/8× to fast-forward)
 export const POUR_RATE_M3_PER_DAY = 6000; // plant throughput while a pour runs
 export const CURE_DAYS = 14;            // paste cure clock (compressed from 28)
 export const HORIZON_DAY = 60;          // campaign horizon

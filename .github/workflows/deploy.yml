@@ -28,7 +28,7 @@ jobs:
       # Cache-bust: stamp the bundle reference with this commit's SHA so every
       # deploy invalidates the browser cache (otherwise a static ?v= serves a
       # stale bundle forever).
-      - run: sed -i "s/bundle\.js?v=[^\"]*/bundle.js?v=${GITHUB_SHA}/" public/index.html
+      - run: sed -i "s/bundle\.js?v=[^\"]*/bundle.js?v=${GITHUB_SHA}/; s/styles\.css?v=[^\"]*/styles.css?v=${GITHUB_SHA}/" public/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
