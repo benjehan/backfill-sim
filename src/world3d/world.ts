@@ -73,6 +73,8 @@ const SURFACE_UNIT_M = 7.5; // world units → metres for the surface pipe run (
 const TESTWORK_COST = 4_000_000; // a lab test-work campaign (characterisation + rheology + UCS)
 const TESTWORK_DAYS = 4;         // results lag reality — the program takes time
 const ENV_PENALTY_PER_T = 42;    // fine per tonne of reactive (PAG) reject sent to the TSF uncontained
+const DEV_BASE = 1_800_000;      // base capex to develop access to a stope early
+const DEV_PER_DAY = 180_000;     // extra per day brought forward (drives, drill/blast/muck)
 const SURVEY_COST = 800_000;     // geophysical survey — reveals grade, a first delineation
 const DRILL_COST = 1_500_000;    // one reserve-definition drilling campaign
 const DRILL_DAYS = 2;            // drilling takes rig time
@@ -1158,6 +1160,12 @@ export class World {
     return Math.max(0.4, v * (1 - latePen - crewPen));
   }
 
+  /** Capex to develop access to a stope early (base + per day brought forward). */
+  private developCost(s: StopeUG): number {
+    const daysEarly = Math.max(0, Math.ceil(s.availableDay - this.day));
+    return DEV_BASE + DEV_PER_DAY * daysEarly;
+  }
+
   /** Barricade capacity (kPa it can hold) from its type + optional relief. */
   private barricadeCap(s: StopeUG): number {
     if (!s.barricadeType) return 0;
@@ -1635,9 +1643,13 @@ export class World {
     }).join("")}</div><div class="pNote ${this.fillSuitability(st, ft).verdict === "bad" ? "pWarnNote" : ""}">${this.fillSuitability(st, ft).reason}</div>`;
     let body = "";
     if (st.status === "locked") {
-      body = !st.isPrimary && !this.underground.primaryCured(st.levelIdx)
+      const seqOk = st.isPrimary || this.underground.primaryCured(st.levelIdx);
+      const daysEarly = Math.max(0, Math.ceil(st.availableDay - this.day));
+      body = !seqOk
         ? `<div class="pRow muted">Secondary stope — mining waits until the level's <b>primary</b> is filled and cured.</div>`
-        : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`;
+        : `<div class="pRow muted">Mining develops this stope around <b>day ${st.availableDay}</b>.</div>`
+          + (daysEarly > 0 ? `<div class="pNote">Ahead of the plan? Pay to drive access and extract the void now — keep the plant fed.</div>
+             <button class="pBtn primary" data-act="develop"><b>⛏ Develop access early</b><span>open the void ${daysEarly} d early · ${fmtMoney(this.developCost(st))}</span></button>` : "");
     } else if (st.status === "available" && !ft.reticulated) {
       const canCaf = this.hasCrusher();
       body = `${fillPick}${this.recipeSummary(st)}<button class="pBtn primary" data-act="truck" ${canCaf ? "" : "disabled"}><b>Truck-fill (CAF)</b><span>${canCaf ? "no reticulation — hauled and placed" : "needs a Crusher plant on the surface"}</span></button>`;
@@ -1794,6 +1806,17 @@ export class World {
       if (this.cash < 2_000_000) { this.hud.setStatus(`Not enough cash to remediate ${st.id} (${fmtMoney(2_000_000)}).`); return; }
       this.cash -= 2_000_000; this.underground.remediate(st); this.updateEconomy(); this.renderStopePanel();
       this.hud.setStatus(`${st.id} remediation ordered (${fmtMoney(2_000_000)}) — re-pour required.`);
+      return;
+    }
+    if (act === "develop") {
+      if (st.status !== "locked") return;
+      if (!(st.isPrimary || this.underground.primaryCured(st.levelIdx))) { this.hud.setStatus("Secondary — the level's primary must be filled and cured first."); return; }
+      const cost = this.developCost(st);
+      if (this.cash < cost) { this.hud.setStatus(`Not enough cash to develop ${st.id} (${fmtMoney(cost)}).`); return; }
+      this.cash -= cost; st.availableDay = Math.floor(this.day);
+      this.underground.updateSchedule(this.day); // flips it to available now
+      this.updateEconomy(); this.refreshSchedule(); this.renderStopePanel(); this.saveGame();
+      this.hud.setStatus(`${st.id} developed — access driven and void opened, ready to reticulate (${fmtMoney(cost)}).`);
       return;
     }
     if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
