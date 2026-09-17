@@ -984,7 +984,7 @@ export class World {
   private startConstruction(b: Placed) {
     const area = b.spec.fw * b.spec.fd;
     b.built = false; b.buildProgress = 0;
-    b.buildDays = Math.max(0.5, Math.min(2.2, 0.4 + area / 120)); // bigger footprints take longer
+    b.buildDays = Math.max(1.2, Math.min(4.5, 0.8 + area / 70)); // bigger footprints take longer — long enough for the crew to gather and work
     b.scaffold = this.makeScaffold(b.pos, b.spec.fw, b.spec.fd);
     this.applyBuildVisual(b);
   }
