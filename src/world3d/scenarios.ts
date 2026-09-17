@@ -21,7 +21,7 @@ export interface Scenario {
   terrain: TerrainTheme;
   wet?: { dewaterPerDay: number; waterInflow: number }; // flooded mine: $/day to pump out + m³/day groundwater into the pond
   binder?: { deliveryMult: number; costMult: number };  // remote mine: throttled + pricier cement, pushing you to CAF/HF
-  mineralogy?: { label: string; note: string; varianceAdd: number; latePenalty: number; reactive?: boolean }; // tailings risk revealed by test-work; reactive ⇒ reject needs a controlled (lined) slurry facility
+  mineralogy?: { label: string; note: string; varianceAdd: number; latePenalty: number; reactive?: boolean; reagent?: "sulphide" | "gravity" | "clay" | "polymetallic" }; // tailings risk revealed by test-work; reactive ⇒ reject needs containment; reagent = the ore's ideal flotation/flocculant suite
   climate?: { label: string; rain: number; storm: number; heat: number; cold?: boolean }; // per-roll weather probabilities; cold ⇒ baseline slow cure
   relief?: number; // terrain ruggedness multiplier (<1 low wetlands, >1 rugged); default 1
   land?: "hills" | "mountains" | "seaside" | "valley" | "desert"; // biome shape of the terrain
@@ -41,7 +41,7 @@ export const SCENARIOS: Scenario[] = [
     vol: { base: 6000, sx: 55, depth: 3.5 },
     ucs: { base: 500, perLevel: 120, primary: 180 },
     terrain: { gravel: "#8f8578", dirt: "#7c6b4c", scrub: "#6f8a4e", hills: "#516d3c", rock: "#948a7a" },
-    mineralogy: { label: "Clean tin tailings", note: "low sulphide, predictable — a forgiving material", varianceAdd: 0, latePenalty: 0.03 },
+    mineralogy: { label: "Clean tin tailings", note: "low sulphide, predictable — a forgiving material", varianceAdd: 0, latePenalty: 0.03, reagent: "gravity" },
     climate: { label: "Temperate", rain: 0.3, storm: 0.05, heat: 0 },
     relief: 1.0, land: "hills",
   },
@@ -58,7 +58,7 @@ export const SCENARIOS: Scenario[] = [
     vol: { base: 6500, sx: 60, depth: 3 },
     ucs: { base: 600, perLevel: 150, primary: 220 },
     terrain: { gravel: "#9a8e78", dirt: "#8a6f4a", scrub: "#9a8f5a", hills: "#6e6a42", rock: "#a89876" },
-    mineralogy: { label: "Sulphidic (pyrite)", note: "sulphide oxidation → internal sulphate attack; delayed strength loss unless you design for it. PAG reject needs containment", varianceAdd: 0.02, latePenalty: 0.14, reactive: true },
+    mineralogy: { label: "Sulphidic (pyrite)", note: "sulphide oxidation → internal sulphate attack; delayed strength loss unless you design for it. PAG reject needs containment", varianceAdd: 0.02, latePenalty: 0.14, reactive: true, reagent: "sulphide" },
     climate: { label: "Arid", rain: 0.05, storm: 0.05, heat: 0.35 },
     relief: 1.6, land: "desert",
   },
@@ -76,7 +76,7 @@ export const SCENARIOS: Scenario[] = [
     ucs: { base: 560, perLevel: 135, primary: 200 },
     terrain: { gravel: "#6f7378", dirt: "#5a5f52", scrub: "#4e6a4a", hills: "#3d5340", rock: "#6a7078" },
     wet: { dewaterPerDay: 190_000, waterInflow: 16_000 },
-    mineralogy: { label: "Clay-rich", note: "high water demand & swelling clays — variable rheology, harder to control", varianceAdd: 0.06, latePenalty: 0.04 },
+    mineralogy: { label: "Clay-rich", note: "high water demand & swelling clays — variable rheology, harder to control", varianceAdd: 0.06, latePenalty: 0.04, reagent: "clay" },
     climate: { label: "Tropical (wet)", rain: 0.5, storm: 0.15, heat: 0.05 },
     relief: 0.5, land: "seaside",
   },
@@ -94,7 +94,7 @@ export const SCENARIOS: Scenario[] = [
     ucs: { base: 520, perLevel: 130, primary: 190 },
     terrain: { gravel: "#7a8088", dirt: "#6a6a62", scrub: "#6a7a6e", hills: "#4f5a54", rock: "#8a9098" },
     binder: { deliveryMult: 0.45, costMult: 1.7 },
-    mineralogy: { label: "Variable tungsten tails", note: "inconsistent PSD run to run — variance is the enemy; consistently bad beats highly variable. Reagent-bearing reject needs containment", varianceAdd: 0.05, latePenalty: 0.06, reactive: true },
+    mineralogy: { label: "Variable tungsten tails", note: "inconsistent PSD run to run — variance is the enemy; consistently bad beats highly variable. Reagent-bearing reject needs containment", varianceAdd: 0.05, latePenalty: 0.06, reactive: true, reagent: "gravity" },
     climate: { label: "Cold &amp; remote", rain: 0.2, storm: 0.2, heat: 0, cold: true },
     relief: 1.9, land: "mountains",
   },

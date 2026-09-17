@@ -154,6 +154,7 @@ export class World {
   private drillHoles = 0;      // drill campaigns run — each plants a visible rig on the exploration ground
   private millGrind = 1;       // concentrator comminution: 0 coarse / 1 standard / 2 fine
   private millRecovery = 1;    // concentration route: 0 gravity / 1 flotation / 2 flotation+regrind
+  private millReagent = 0;     // reagent/flocculant suite: 0 general / 1 sulphide / 2 gravity / 3 clay
   private weather: Weather = "clear";
   private weatherUntil = 0;    // day the current weather spell ends
   // staffing: headcount + competency (0..1) per role; starts as a lean, half-trained crew
@@ -676,7 +677,7 @@ export class World {
     const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1);
     const sup = this.supply.tick(dd, this.supplyState(), deliveryMult, this.plantThroughput > 0 ? 0.6 : 0, this.millPasteFrac());
     this.lastWaterReused = dd > 0 ? sup.waterReused / dd : 0; // m³/day recovered, for the HUD
-    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1) * this.millRecoveryMult();
+    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1) * this.millRecoveryMult() * this.millReagentMult();
     const modeCostMult = this.activeBinderMode()?.costMult ?? 1; // haulage/isotainer cost more per tonne
     const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult;
     this.cash += revenue - binderCost;
@@ -918,7 +919,7 @@ export class World {
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
       oreConfidence: this.oreConfidence, explored: this.explored, drillHoles: this.drillHoles, weather: this.weather, weatherUntil: this.weatherUntil,
-      millGrind: this.millGrind, millRecovery: this.millRecovery, phase: this.phase,
+      millGrind: this.millGrind, millRecovery: this.millRecovery, millReagent: this.millReagent, phase: this.phase,
       staff: this.staff,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
@@ -956,7 +957,7 @@ export class World {
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.drillHoles = s.drillHoles ?? 0; for (let i = 1; i <= this.drillHoles; i++) this.spawnDrillHole(i);
-    this.millGrind = s.millGrind ?? 1; this.millRecovery = s.millRecovery ?? 1;
+    this.millGrind = s.millGrind ?? 1; this.millRecovery = s.millRecovery ?? 1; this.millReagent = s.millReagent ?? 0;
     this.phase = s.phase ?? "operate"; this.hud.setPhase(this.phase === "operate" ? "▶ Operating" : this.phase === "setup" ? "◑ Set up" : "◐ Explore");
     this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
     if (s.staff) for (const k of Object.keys(this.staff)) if (s.staff[k]) this.staff[k] = s.staff[k];
@@ -1230,6 +1231,12 @@ export class World {
 
   // ---- concentrator flowsheet (D3) ------------------------------------------
   private millRecoveryMult() { return [0.85, 1.0, 1.15][this.millRecovery]; }   // concentrate value per tonne
+  /** Matching the reagent/flocculant suite to the ore's mineralogy lifts recovery; a mismatch drops it. */
+  private millReagentMult() {
+    const chosen = ["general", "sulphide", "gravity", "clay"][this.millReagent];
+    if (chosen === "general") return 1.0;
+    return chosen === this.scenario.mineralogy?.reagent ? 1.12 : 0.88;
+  }
   private millThroughputMult() { return [1.12, 1.0, 0.9][this.millGrind]; }     // coarse grinds faster
   private millPasteFrac() { return [0.45, 0.6, 0.75][this.millGrind]; }         // finer grind → more paste-suitable tailings
   private flowsheetOpexPerDay() { return this.millRecovery * 9_000 + this.millGrind * 6_000; }
@@ -1638,7 +1645,14 @@ export class World {
     el.className = "whResult flowsheetCard";
     const grinds = ["Coarse (crush + rod)", "Standard (crush + ball)", "Fine (SAG + ball + regrind)"];
     const recovs = ["Gravity only", "Flotation", "Flotation + regrind"];
-    const opt = (kind: "grind" | "recov", i: number, label: string, sub: string, on: boolean) =>
+    const reagents = ["General-purpose", "Sulphide collector (xanthate)", "Gravity / oxide aid", "Clay depressant"];
+    const idealName: Record<string, string> = { sulphide: "Sulphide collector", gravity: "Gravity / oxide aid", clay: "Clay depressant", polymetallic: "Polymetallic suite" };
+    const ideal = this.scenario.mineralogy?.reagent;
+    const idealHint = !this.testWorkDone
+      ? "Run <b>test-work</b> (🧪 Lab) to identify the ideal reagent suite for this ore."
+      : ideal ? `Test-work: this ore responds best to <b>${idealName[ideal]}</b> — match it for +12% recovery (a mismatch costs 12%).`
+      : "This ore is not reagent-sensitive.";
+    const opt = (kind: "grind" | "recov" | "reagent", i: number, label: string, sub: string, on: boolean) =>
       `<button class="fillBtn ${on ? "on" : ""}" data-act="${kind}:${i}" style="flex:1 1 100%;text-align:left">${label}<br><small>${sub}</small></button>`;
     el.innerHTML = `<div class="introCard">
       <div class="rsHead">⚙ Concentrator flowsheet</div>
@@ -1647,22 +1661,25 @@ export class World {
       <div class="fillPick" style="flex-wrap:wrap">${grinds.map((g, i) => opt("grind", i, g, `${[45, 60, 75][i]}% paste feed · ${[112, 100, 90][i]}% throughput`, this.millGrind === i)).join("")}</div>
       <div class="pSplit"><span>Recovery → income</span><b>${Math.round(this.millRecoveryMult() * 100)}%</b></div>
       <div class="fillPick" style="flex-wrap:wrap">${recovs.map((rc, i) => opt("recov", i, rc, `${[85, 100, 115][i]}% concentrate value · +${fmtMoney(i * 9000)}/day`, this.millRecovery === i)).join("")}</div>
+      <div class="pSplit"><span>Reagent suite → match</span><b class="${this.millReagentMult() >= 1 ? "good" : "pLate"}">${Math.round(this.millReagentMult() * 100)}%</b></div>
+      <div class="fillPick" style="flex-wrap:wrap">${reagents.map((rg, i) => opt("reagent", i, rg, i === 0 ? "safe, no bonus" : "match the ore +12% / mismatch −12%", this.millReagent === i)).join("")}</div>
+      <div class="pNote">${idealHint}</div>
       <button class="pBtn primary" id="fsClose"><b>Close ▶</b></button>
     </div>`;
     this.root.appendChild(el);
     el.querySelector("#fsClose")!.addEventListener("click", () => el.remove());
-    el.querySelectorAll<HTMLElement>("[data-act^='grind:'],[data-act^='recov:']").forEach((b) =>
+    el.querySelectorAll<HTMLElement>("[data-act^='grind:'],[data-act^='recov:'],[data-act^='reagent:']").forEach((b) =>
       b.addEventListener("click", () => { this.setFlowsheet(b.dataset.act!); this.showFlowsheet(); }));
   }
   private setFlowsheet(act: string) {
     const [kind, vStr] = act.split(":"); const v = +vStr;
-    const cur = kind === "grind" ? this.millGrind : this.millRecovery;
+    const cur = kind === "grind" ? this.millGrind : kind === "recov" ? this.millRecovery : this.millReagent;
     if (v === cur) return;
     if (this.cash < FLOWSHEET_SWITCH_COST) { this.hud.setStatus(`Not enough cash to reconfigure the flowsheet (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`); return; }
     this.cash -= FLOWSHEET_SWITCH_COST;
-    if (kind === "grind") this.millGrind = v; else this.millRecovery = v;
+    if (kind === "grind") this.millGrind = v; else if (kind === "recov") this.millRecovery = v; else this.millReagent = v;
     this.updateEconomy(); this.saveGame();
-    this.hud.setStatus(`Flowsheet reconfigured — ${kind === "grind" ? "grind" : "recovery route"} changed (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`);
+    this.hud.setStatus(`Flowsheet reconfigured — ${kind === "grind" ? "grind" : kind === "recov" ? "recovery route" : "reagent suite"} changed (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`);
   }
 
   /** Pay to raise the selected TSF's embankment — adds storage, and the dam visibly grows taller. */
