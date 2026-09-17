@@ -83,7 +83,7 @@ export class SupplyChain {
   tsf: Stock = { level: 0, cap: 0 };
 
   /** One game-day tick of the surface economy: hoist, mill, route tailings, deliver binder, pump water. */
-  tick(dd: number, b: SupplyBuildings, binderDeliveryMult: number, dewaterEff = 0): DayResult {
+  tick(dd: number, b: SupplyBuildings, binderDeliveryMult: number, dewaterEff = 0, pasteFrac = PASTE_SUITABLE_FRAC): DayResult {
     const notes: string[] = [];
     this.tsf.cap = b.tsfCap;
     let pasteStreamT = 0, rejectStreamT = 0, waterReused = 0;
@@ -111,7 +111,7 @@ export class SupplyChain {
       // The mill throws two streams: a graded PASTE-FEED stream (suits backfill) and a
       // REJECT/fines stream. Only the paste feed competes for the plant buffer; the
       // unbuffered paste feed + all reject go to the TSF — the ~50% rule, made explicit.
-      pasteStreamT = tail * PASTE_SUITABLE_FRAC;
+      pasteStreamT = tail * pasteFrac;
       rejectStreamT = tail - pasteStreamT;
       const toBuffer = Math.min(pasteStreamT, bufFree);
       this.tailings.level += toBuffer;

@@ -74,6 +74,7 @@ const TESTWORK_COST = 4_000_000; // a lab test-work campaign (characterisation +
 const TESTWORK_DAYS = 4;         // results lag reality — the program takes time
 const ENV_PENALTY_PER_T = 42;    // fine per tonne of reactive (PAG) reject sent to the TSF uncontained
 const EXTRACT_ORE_PER_M3 = 2.4;  // t of ore mucked per m³ of void opened (reserve → ROM pad)
+const FLOWSHEET_SWITCH_COST = 3_000_000; // reconfiguring a concentrator route
 const DEV_BASE = 1_800_000;      // base capex to develop access to a stope early
 const DEV_PER_DAY = 180_000;     // extra per day brought forward (drives, drill/blast/muck)
 const SURVEY_COST = 800_000;     // geophysical survey — reveals grade, a first delineation
@@ -150,6 +151,8 @@ export class World {
   private oreConfidence = 0.5; // how well the orebody is delineated (0.5 inferred → 1.0 measured)
   private explored = false;    // a geophysical survey has been run (grade revealed)
   private drillHoles = 0;      // drill campaigns run — each plants a visible rig on the exploration ground
+  private millGrind = 1;       // concentrator comminution: 0 coarse / 1 standard / 2 fine
+  private millRecovery = 1;    // concentration route: 0 gravity / 1 flotation / 2 flotation+regrind
   private weather: Weather = "clear";
   private weatherUntil = 0;    // day the current weather spell ends
   // staffing: headcount + competency (0..1) per role; starts as a lean, half-trained crew
@@ -661,9 +664,9 @@ export class World {
 
     // surface materials economy: hoist ore, mill it (concentrate income + tailings), route to TSF, deliver binder, pump water
     const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1);
-    const sup = this.supply.tick(dd, this.supplyState(), deliveryMult, this.plantThroughput > 0 ? 0.6 : 0);
+    const sup = this.supply.tick(dd, this.supplyState(), deliveryMult, this.plantThroughput > 0 ? 0.6 : 0, this.millPasteFrac());
     this.lastWaterReused = dd > 0 ? sup.waterReused / dd : 0; // m³/day recovered, for the HUD
-    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1);
+    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1) * this.millRecoveryMult();
     const modeCostMult = this.activeBinderMode()?.costMult ?? 1; // haulage/isotainer cost more per tonne
     const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult;
     this.cash += revenue - binderCost;
@@ -681,6 +684,7 @@ export class World {
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * this.opexMult * dd; // daily running cost
     this.cash -= this.crewWagesPerDay() * dd; // crew wages
+    this.cash -= this.flowsheetOpexPerDay() * dd; // concentrator flowsheet power/reagents
     if (this.scenario.wet) this.cash -= this.scenario.wet.dewaterPerDay * dd; // pumping the flooded workings out
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) { const ore = this.grantExtractionOre(s); this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ${Math.round(ore).toLocaleString()} t ore to the ROM pad, void ready to reticulate (due day ${s.dueDay}).`); }
@@ -904,6 +908,7 @@ export class World {
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
       oreConfidence: this.oreConfidence, explored: this.explored, drillHoles: this.drillHoles, weather: this.weather, weatherUntil: this.weatherUntil,
+      millGrind: this.millGrind, millRecovery: this.millRecovery,
       staff: this.staff,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
@@ -941,6 +946,7 @@ export class World {
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.drillHoles = s.drillHoles ?? 0; for (let i = 1; i <= this.drillHoles; i++) this.spawnDrillHole(i);
+    this.millGrind = s.millGrind ?? 1; this.millRecovery = s.millRecovery ?? 1;
     this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
     if (s.staff) for (const k of Object.keys(this.staff)) if (s.staff[k]) this.staff[k] = s.staff[k];
     this.underground.weatherCureMult = this.weather === "heat" ? 0.85 : this.weather === "cold" ? 1.18 : 1;
@@ -1201,6 +1207,12 @@ export class World {
   /** How long an access drive takes — deeper levels take longer to reach. */
   private devDays(s: StopeUG): number { return 2 + s.levelIdx; }
 
+  // ---- concentrator flowsheet (D3) ------------------------------------------
+  private millRecoveryMult() { return [0.85, 1.0, 1.15][this.millRecovery]; }   // concentrate value per tonne
+  private millThroughputMult() { return [1.12, 1.0, 0.9][this.millGrind]; }     // coarse grinds faster
+  private millPasteFrac() { return [0.45, 0.6, 0.75][this.millGrind]; }         // finer grind → more paste-suitable tailings
+  private flowsheetOpexPerDay() { return this.millRecovery * 9_000 + this.millGrind * 6_000; }
+
   /** Barricade capacity (kPa it can hold) from its type + optional relief. */
   private barricadeCap(s: StopeUG): number {
     if (!s.barricadeType) return 0;
@@ -1368,7 +1380,7 @@ export class World {
     const bm = this.activeBinderMode();
     return {
       mill: live("mill"), rail: live("rail"), water: live("waterpump"), tsfCap,
-      millMult: this.tierMult("mill") * this.weatherMillMult(), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
+      millMult: this.tierMult("mill") * this.weatherMillMult() * this.millThroughputMult(), waterMult: this.tierMult("waterpump"), binderMult: this.tierMult("rail"),
       binderSupply: !!bm, binderDeliveryMult: bm?.deliveryMult ?? 0, binderSiloCap: bm?.siloCap ?? this.supply.binder.cap,
       waterInflow: this.scenario.wet?.waterInflow ?? 0,
     };
@@ -1594,7 +1606,41 @@ export class World {
       <div class="pSplit"><span>Upkeep</span><b>${fmtMoney(s.opexPerDay)}/day</b></div>
       <div class="pSplit"><span>Build cost</span><b>${fmtMoney(s.cost)}</b></div>
       ${extra}
-      ${s.type === "plant" ? `<button class="pBtn primary" data-act="enterplant"><b>Step inside ▶</b></button>` : ""}`;
+      ${s.type === "plant" ? `<button class="pBtn primary" data-act="enterplant"><b>Step inside ▶</b></button>` : ""}
+      ${s.type === "mill" ? `<button class="pBtn primary" data-act="flowsheet"><b>⚙ Configure flowsheet ▶</b></button>` : ""}`;
+  }
+
+  private showFlowsheet() {
+    this.root.querySelector(".flowsheetCard")?.remove();
+    const el = document.createElement("div");
+    el.className = "whResult flowsheetCard";
+    const grinds = ["Coarse (crush + rod)", "Standard (crush + ball)", "Fine (SAG + ball + regrind)"];
+    const recovs = ["Gravity only", "Flotation", "Flotation + regrind"];
+    const opt = (kind: "grind" | "recov", i: number, label: string, sub: string, on: boolean) =>
+      `<button class="fillBtn ${on ? "on" : ""}" data-act="${kind}:${i}" style="flex:1 1 100%;text-align:left">${label}<br><small>${sub}</small></button>`;
+    el.innerHTML = `<div class="introCard">
+      <div class="rsHead">⚙ Concentrator flowsheet</div>
+      <div class="pNote">The mill is a design surface. Comminution sets how fine you grind — finer means more of the tailings suit paste, but slower throughput and more power. Concentration sets metal recovery — the concentrate revenue per tonne. Switching a route costs ${fmtMoney(FLOWSHEET_SWITCH_COST)}.</div>
+      <div class="pSplit"><span>Grind → paste-feed</span><b>${Math.round(this.millPasteFrac() * 100)}% · throughput ${Math.round(this.millThroughputMult() * 100)}%</b></div>
+      <div class="fillPick" style="flex-wrap:wrap">${grinds.map((g, i) => opt("grind", i, g, `${[45, 60, 75][i]}% paste feed · ${[112, 100, 90][i]}% throughput`, this.millGrind === i)).join("")}</div>
+      <div class="pSplit"><span>Recovery → income</span><b>${Math.round(this.millRecoveryMult() * 100)}%</b></div>
+      <div class="fillPick" style="flex-wrap:wrap">${recovs.map((rc, i) => opt("recov", i, rc, `${[85, 100, 115][i]}% concentrate value · +${fmtMoney(i * 9000)}/day`, this.millRecovery === i)).join("")}</div>
+      <button class="pBtn primary" id="fsClose"><b>Close ▶</b></button>
+    </div>`;
+    this.root.appendChild(el);
+    el.querySelector("#fsClose")!.addEventListener("click", () => el.remove());
+    el.querySelectorAll<HTMLElement>("[data-act^='grind:'],[data-act^='recov:']").forEach((b) =>
+      b.addEventListener("click", () => { this.setFlowsheet(b.dataset.act!); this.showFlowsheet(); }));
+  }
+  private setFlowsheet(act: string) {
+    const [kind, vStr] = act.split(":"); const v = +vStr;
+    const cur = kind === "grind" ? this.millGrind : this.millRecovery;
+    if (v === cur) return;
+    if (this.cash < FLOWSHEET_SWITCH_COST) { this.hud.setStatus(`Not enough cash to reconfigure the flowsheet (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`); return; }
+    this.cash -= FLOWSHEET_SWITCH_COST;
+    if (kind === "grind") this.millGrind = v; else this.millRecovery = v;
+    this.updateEconomy(); this.saveGame();
+    this.hud.setStatus(`Flowsheet reconfigured — ${kind === "grind" ? "grind" : "recovery route"} changed (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`);
   }
 
   /** Pay to raise the selected TSF's embankment — adds storage, and the dam visibly grows taller. */
@@ -1842,6 +1888,7 @@ export class World {
     if (act === "enterplant") { this.deselectBuilding(); this.enterPlant(); return; }
     if (act === "closebuilding") { this.deselectBuilding(); return; }
     if (act === "raisedam") { this.raiseDam(); return; }
+    if (act === "flowsheet") { this.showFlowsheet(); return; }
     if (act === "testwork") {
       if (this.testWorkDone) return;
       if (this.cash < TESTWORK_COST) { this.hud.setStatus(`Not enough cash for a test-work campaign (${fmtMoney(TESTWORK_COST)}).`); return; }
