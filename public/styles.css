@@ -560,6 +560,9 @@ select, input[type=number] {
 .techRp { float: right; color: #7be0a6; font-size: 13px; }
 .techList { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
 .techRow { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.staffBtns { display: flex; gap: 4px; flex: 0 0 auto; }
+.staffCard .techMain { flex: 1; min-width: 0; }
+.staffCard .techMain .pBar { margin-top: 5px; }
 .techRow.owned { opacity: .6; }
 .techMain { flex: 1; text-align: left; }
 .techMain b { display: block; font-size: 13px; }

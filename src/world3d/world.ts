@@ -83,6 +83,18 @@ const DRILL_FIND_BASE = 34_000;  // reserve delineated/extended per campaign (di
 function pseudoNoise(x: number): number { const s = Math.sin(x * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
 type Weather = "clear" | "rain" | "storm" | "heat" | "cold";
 
+// Staffing (course Modules 08/20). Each role has a full-operation target headcount,
+// a daily wage, and up-front hire/train costs. Understaffed or green crews hurt
+// throughput, quality and safety; wages are a real slice of opex.
+interface RoleDef { key: string; label: string; required: number; wage: number; hire: number; train: number; note: string; }
+const ROLES: RoleDef[] = [
+  { key: "operators", label: "Plant operators", required: 3, wage: 950, hire: 400_000, train: 350_000, note: "Run the paste plant — thin/green crews cut throughput and let quality drift." },
+  { key: "ugcrew", label: "Underground crew", required: 3, wage: 900, hire: 350_000, train: 300_000, note: "Reticulation, barricades and pours underground." },
+  { key: "geotech", label: "Geotechnical", required: 1, wage: 1300, hire: 500_000, train: 450_000, note: "Ground control & barricade sign-off — the buffer against inrush." },
+  { key: "lab", label: "Lab technicians", required: 2, wage: 800, hire: 300_000, train: 250_000, note: "QA/QC and test-work — tighten the strength database." },
+  { key: "fitters", label: "Fitters (maintenance)", required: 2, wage: 900, hire: 350_000, train: 300_000, note: "Keep the plant and pumps turning." },
+];
+
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
 interface GameEvent { id: string; title: string; body: string; options: EventOption[]; }
@@ -136,6 +148,11 @@ export class World {
   private explored = false;    // a geophysical survey has been run (grade revealed)
   private weather: Weather = "clear";
   private weatherUntil = 0;    // day the current weather spell ends
+  // staffing: headcount + competency (0..1) per role; starts as a lean, half-trained crew
+  private staff: Record<string, { count: number; comp: number }> = {
+    operators: { count: 2, comp: 0.55 }, ugcrew: { count: 2, comp: 0.55 }, geotech: { count: 1, comp: 0.5 },
+    lab: { count: 1, comp: 0.5 }, fitters: { count: 1, comp: 0.5 },
+  };
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
@@ -223,6 +240,7 @@ export class World {
       onHelp: () => this.showEconomyHelp(),
       onResearch: () => this.showResearch(),
       onGeology: () => this.showGeology(),
+      onStaff: () => this.showStaff(),
     });
     this.hud.setMine(this.scenario.name);
     this.updateEconomy();
@@ -280,6 +298,56 @@ export class World {
   }
 
   /** A dismissible card explaining how the money loop works. */
+  // ---- staffing / crews -----------------------------------------------------
+  private roleAdequacy(key: string): number {
+    const r = ROLES.find((x) => x.key === key)!; const c = this.staff[key];
+    return Math.min(1, c.count / r.required) * c.comp;
+  }
+  private crewCompetency(): number { return ROLES.reduce((a, r) => a + this.roleAdequacy(r.key), 0) / ROLES.length; }
+  private crewWagesPerDay(): number { return ROLES.reduce((a, r) => a + this.staff[r.key].count * r.wage, 0); }
+  private operatorAdequacy() { return this.roleAdequacy("operators"); }
+  private geotechAdequacy() { return this.roleAdequacy("geotech"); }
+
+  private showStaff() {
+    this.root.querySelector(".staffCard")?.remove();
+    const el = document.createElement("div");
+    el.className = "whResult staffCard";
+    const rows = ROLES.map((r) => {
+      const c = this.staff[r.key];
+      const adq = Math.round(this.roleAdequacy(r.key) * 100);
+      const tone = c.count < r.required ? "amber" : "green";
+      return `<div class="techRow"><div class="techMain"><b>${r.label} — ${c.count}/${r.required} · ${Math.round(c.comp * 100)}% skill</b><span>${r.note} · ${fmtMoney(r.wage)}/day ea</span>
+        <div class="pBar"><div class="pBarFill ${tone}" style="width:${adq}%"></div></div></div>
+        <div class="staffBtns"><button class="pMini" data-act="hire:${r.key}" title="hire (+wage)">＋</button><button class="pMini" data-act="train:${r.key}" title="train (+skill)">🎓</button><button class="pMini" data-act="fire:${r.key}" title="lay off">－</button></div></div>`;
+    }).join("");
+    el.innerHTML = `<div class="introCard">
+      <div class="rsHead">👷 Staff &amp; crews <span class="techRp">${fmtMoney(this.crewWagesPerDay())}/day wages</span></div>
+      <div class="pNote">Hire and train your crews. Understaffed or green crews cut plant throughput, let strength scatter, and raise the risk of an inrush. Wages are a real slice of opex.</div>
+      <div class="pSplit"><span>Overall crew competency</span><b>${Math.round(this.crewCompetency() * 100)}%</b></div>
+      <div class="techList">${rows}</div>
+      <button class="pBtn primary" id="staffClose"><b>Close ▶</b></button>
+    </div>`;
+    this.root.appendChild(el);
+    el.querySelector("#staffClose")!.addEventListener("click", () => el.remove());
+    el.querySelectorAll<HTMLElement>("[data-act^='hire:'],[data-act^='train:'],[data-act^='fire:']").forEach((b) =>
+      b.addEventListener("click", () => { this.crewAction(b.dataset.act!); this.showStaff(); }));
+  }
+  private crewAction(act: string) {
+    const [verb, key] = act.split(":"); const r = ROLES.find((x) => x.key === key); const c = this.staff[key];
+    if (!r || !c) return;
+    if (verb === "hire") {
+      if (this.cash < r.hire) { this.hud.setStatus(`Not enough cash to hire a ${r.label} (${fmtMoney(r.hire)}).`); return; }
+      this.cash -= r.hire; c.count++; this.hud.setStatus(`Hired a ${r.label} — now ${c.count}. Wages up ${fmtMoney(r.wage)}/day.`);
+    } else if (verb === "train") {
+      if (c.comp >= 0.99) { this.hud.setStatus(`${r.label} already fully competent.`); return; }
+      if (this.cash < r.train) { this.hud.setStatus(`Not enough cash to train ${r.label} (${fmtMoney(r.train)}).`); return; }
+      this.cash -= r.train; c.comp = Math.min(1, c.comp + 0.15); this.hud.setStatus(`${r.label} training — skill now ${Math.round(c.comp * 100)}%.`);
+    } else if (verb === "fire") {
+      if (c.count <= 0) return; c.count--; this.hud.setStatus(`Laid off a ${r.label} — now ${c.count}. Wages down ${fmtMoney(r.wage)}/day.`);
+    }
+    this.updateEconomy(); this.saveGame();
+  }
+
   /** Geology & exploration: survey to reveal grade, drill to delineate/extend the reserve. */
   private showGeology() {
     this.root.querySelector(".geologyCard")?.remove();
@@ -477,7 +545,8 @@ export class World {
   /** Pour throughput is set by the plant you build inside: no line = slow contract plant. */
   private pourRatePerDay(): number {
     const base = this.plantThroughput <= 0 ? POUR_RATE_M3_PER_DAY * 0.4 : POUR_RATE_M3_PER_DAY * Math.max(0.4, Math.min(1.2, this.plantThroughput / 55));
-    return base * this.pourMult();
+    const crew = 0.7 + 0.3 * this.operatorAdequacy(); // thin/green plant crews run slower
+    return base * this.pourMult() * crew;
   }
 
   // ---- live clock -----------------------------------------------------------
@@ -545,7 +614,8 @@ export class World {
       // grace: the barricade tolerates a brief overload — ease the flow and it recovers
       if (cap > 0 && s.barricadeKpa > cap) s.barricadeOver += dd;
       else s.barricadeOver = Math.max(0, s.barricadeOver - dd * 2);
-      if (cap > 0 && s.barricadeOver > 0.05) {
+      const grace = 0.05 * (0.4 + 0.8 * this.geotechAdequacy()); // good geotech spots the overload sooner and reacts
+      if (cap > 0 && s.barricadeOver > grace) {
         this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
         this.underground.inrush(s); this.sound.burst();
         if (s.exclusionZone) {
@@ -591,6 +661,7 @@ export class World {
     if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
     const ev = this.underground.updateSchedule(this.day);
     this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * this.opexMult * dd; // daily running cost
+    this.cash -= this.crewWagesPerDay() * dd; // crew wages
     if (this.scenario.wet) this.cash -= this.scenario.wet.dewaterPerDay * dd; // pumping the flooded workings out
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
     for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
@@ -814,6 +885,7 @@ export class World {
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
       oreConfidence: this.oreConfidence, explored: this.explored, weather: this.weather, weatherUntil: this.weatherUntil,
+      staff: this.staff,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
       plantThroughput: this.plantThroughput,
@@ -850,6 +922,7 @@ export class World {
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
+    if (s.staff) for (const k of Object.keys(this.staff)) if (s.staff[k]) this.staff[k] = s.staff[k];
     this.underground.weatherCureMult = this.weather === "heat" ? 0.85 : this.weather === "cold" ? 1.18 : 1;
     this.hud.setWeather(this.weatherLabel());
     this.tempDeliveryMult = s.tempDeliveryMult ?? 1; this.tempDeliveryUntil = s.tempDeliveryUntil ?? 0;
@@ -1081,7 +1154,8 @@ export class World {
     const minl = this.scenario.mineralogy;
     if (!this.testWorkDone) v = 1 + (v - 1) * 2.5 - (minl?.varianceAdd ?? 0); // untested → wide, risky scatter
     const latePen = (minl?.latePenalty ?? 0) * (this.testWorkDone ? 0.4 : 1);
-    return Math.max(0.4, v * (1 - latePen));
+    const crewPen = (1 - this.crewCompetency()) * 0.08; // green/thin crews mix and QC less consistently
+    return Math.max(0.4, v * (1 - latePen - crewPen));
   }
 
   /** Barricade capacity (kPa it can hold) from its type + optional relief. */

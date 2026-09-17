@@ -17,6 +17,7 @@ export interface HudCallbacks {
   onHelp: () => void;
   onResearch: () => void;
   onGeology: () => void;
+  onStaff: () => void;
 }
 
 const SPEED_LABELS = ["1×", "2×", "4×", "8×"];
@@ -63,6 +64,7 @@ export class Hud {
         <button class="whSpd" id="whHelp" title="how the economy works">💰</button>
         <button class="whSpd" id="whResearch" title="research lab">🔬</button>
         <button class="whSpd" id="whGeology" title="geology &amp; exploration">🧭</button>
+        <button class="whSpd" id="whStaff" title="staff &amp; crews">👷</button>
       </div>
       <div class="whSched" id="whSched"></div>
       <div class="whLabPanel hidden" id="whLabPanel">
@@ -124,6 +126,7 @@ export class Hud {
     root.querySelector("#whHelp")!.addEventListener("click", () => cb.onHelp());
     root.querySelector("#whResearch")!.addEventListener("click", () => cb.onResearch());
     root.querySelector("#whGeology")!.addEventListener("click", () => cb.onGeology());
+    root.querySelector("#whStaff")!.addEventListener("click", () => cb.onStaff());
     root.querySelectorAll<HTMLButtonElement>(".whSpd[data-spd]").forEach((b) => {
       this.speedBtns.push(b);
       b.addEventListener("click", () => cb.onSpeed(+b.dataset.spd!));
