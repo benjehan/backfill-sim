@@ -241,11 +241,19 @@ export class Underground {
 
   private paint(s: StopeUG, day: number) {
     const m = s.mesh.material as StandardMaterial;
-    if (s.status === "pouring") {
+    // Locked = still solid ore in the ground (opaque, ore-flecked); developed = an
+    // open void (translucent) you can see the fill rise inside. Extraction = ore → void.
+    if (s.status === "locked") {
+      m.diffuseColor = Color3.FromHexString("#5c4a30"); // unmined ore/rock
+      m.emissiveColor = Color3.FromHexString("#191307");
+      m.alpha = 1;
+    } else if (s.status === "pouring") {
+      m.alpha = 0.32;
       const f = Math.min(1, s.placedM3 / s.volumeM3);
       m.diffuseColor = Color3.Lerp(Color3.FromHexString(STATUS_COLOR.piped), Color3.FromHexString(STATUS_COLOR.curing), f);
       m.emissiveColor = Color3.FromHexString("#3a2a10").scale(f);
     } else {
+      m.alpha = 0.32;
       m.diffuseColor = Color3.FromHexString(STATUS_COLOR[s.status]);
       const isOverdue = (s.status === "available" || s.status === "piped") && day > s.dueDay;
       if (isOverdue) m.emissiveColor = Color3.FromHexString("#5a1414");

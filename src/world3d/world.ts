@@ -73,6 +73,7 @@ const SURFACE_UNIT_M = 7.5; // world units → metres for the surface pipe run (
 const TESTWORK_COST = 4_000_000; // a lab test-work campaign (characterisation + rheology + UCS)
 const TESTWORK_DAYS = 4;         // results lag reality — the program takes time
 const ENV_PENALTY_PER_T = 42;    // fine per tonne of reactive (PAG) reject sent to the TSF uncontained
+const EXTRACT_ORE_PER_M3 = 2.4;  // t of ore mucked per m³ of void opened (reserve → ROM pad)
 const DEV_BASE = 1_800_000;      // base capex to develop access to a stope early
 const DEV_PER_DAY = 180_000;     // extra per day brought forward (drives, drill/blast/muck)
 const SURVEY_COST = 800_000;     // geophysical survey — reveals grade, a first delineation
@@ -666,7 +667,7 @@ export class World {
     this.cash -= this.crewWagesPerDay() * dd; // crew wages
     if (this.scenario.wet) this.cash -= this.scenario.wet.dewaterPerDay * dd; // pumping the flooded workings out
     this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
-    for (const s of ev.newlyAvailable) this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ready to reticulate (due day ${s.dueDay}).`);
+    for (const s of ev.newlyAvailable) { const ore = this.grantExtractionOre(s); this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ${Math.round(ore).toLocaleString()} t ore to the ROM pad, void ready to reticulate (due day ${s.dueDay}).`); }
     // 7-day early cylinder — the course's mid-cure warning that a recipe is short
     for (const s of this.underground.stopes) {
       if (s.status === "curing" && !s.ucs7Reported && this.day - s.cureStartDay >= this.underground.cureDaysFor(s) * 0.5) {
@@ -1160,6 +1161,14 @@ export class World {
     return Math.max(0.4, v * (1 - latePen - crewPen));
   }
 
+  /** Mucking a newly-opened stope moves its ore from the reserve onto the ROM pad
+   *  (a burst to mill) — net-neutral on total ore, capped by pad room. Extraction → ore → void. */
+  private grantExtractionOre(s: StopeUG): number {
+    const want = s.volumeM3 * EXTRACT_ORE_PER_M3;
+    const take = Math.min(want, this.supply.oreReserve.level, this.supply.ore.cap - this.supply.ore.level);
+    if (take > 0) { this.supply.oreReserve.level -= take; this.supply.ore.level += take; }
+    return take;
+  }
   /** Capex to develop access to a stope early (base + per day brought forward). */
   private developCost(s: StopeUG): number {
     const daysEarly = Math.max(0, Math.ceil(s.availableDay - this.day));
@@ -1814,9 +1823,10 @@ export class World {
       const cost = this.developCost(st);
       if (this.cash < cost) { this.hud.setStatus(`Not enough cash to develop ${st.id} (${fmtMoney(cost)}).`); return; }
       this.cash -= cost; st.availableDay = Math.floor(this.day);
-      this.underground.updateSchedule(this.day); // flips it to available now
+      const ev = this.underground.updateSchedule(this.day); // flips it to available now
+      let ore = 0; for (const s of ev.newlyAvailable) ore += this.grantExtractionOre(s);
       this.updateEconomy(); this.refreshSchedule(); this.renderStopePanel(); this.saveGame();
-      this.hud.setStatus(`${st.id} developed — access driven and void opened, ready to reticulate (${fmtMoney(cost)}).`);
+      this.hud.setStatus(`${st.id} developed — access driven, ${Math.round(ore).toLocaleString()} t ore mucked, void ready to reticulate (${fmtMoney(cost)}).`);
       return;
     }
     if (act.startsWith("fill:")) { this.underground.setFillType(st, act.slice(5)); this.renderStopePanel(); return; }
