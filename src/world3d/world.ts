@@ -36,7 +36,7 @@ import {
 } from "./backfillModel.js";
 import { Hud } from "./hud.js";
 import { SoundKit } from "./sound.js";
-import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES } from "./supplyChain.js";
+import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES, MILL_NET_PER_T } from "./supplyChain.js";
 import { SCENARIOS, type Scenario } from "./scenarios.js";
 import { loadCompany, saveCompany, legacyForGrade, hasPerk } from "./company.js";
 import { writeSave, clearSave, SAVE_VERSION } from "./savegame.js";
@@ -73,6 +73,11 @@ const SURFACE_UNIT_M = 7.5; // world units → metres for the surface pipe run (
 const TESTWORK_COST = 4_000_000; // a lab test-work campaign (characterisation + rheology + UCS)
 const TESTWORK_DAYS = 4;         // results lag reality — the program takes time
 const ENV_PENALTY_PER_T = 42;    // fine per tonne of reactive (PAG) reject sent to the TSF uncontained
+const SURVEY_COST = 800_000;     // geophysical survey — reveals grade, a first delineation
+const DRILL_COST = 1_500_000;    // one reserve-definition drilling campaign
+const DRILL_DAYS = 2;            // drilling takes rig time
+const DRILL_CONF = 0.12;         // confidence gained per campaign
+const DRILL_FIND_BASE = 34_000;  // reserve delineated/extended per campaign (diminishes toward full confidence)
 
 interface Placed { spec: BuildingSpec; root: TransformNode; pos: Vector3; marker: Mesh | null; raises: number; tier: number; built: boolean; buildProgress: number; buildDays: number; scaffold: TransformNode | null; }
 interface EventOption { label: string; detail: string; apply: (w: World) => void; }
@@ -123,6 +128,8 @@ export class World {
   private lastWaterReused = 0; // m³/day of process water recovered by dewatering (HUD)
   private envFinesTotal = 0;   // cumulative environmental fines for uncontained PAG reject
   private envBreachActive = false;
+  private oreConfidence = 0.5; // how well the orebody is delineated (0.5 inferred → 1.0 measured)
+  private explored = false;    // a geophysical survey has been run (grade revealed)
   private lastDayShown = 0;
   private roadMeshes: Mesh[] = [];
   private powerLineMeshes: Mesh[] = [];
@@ -209,6 +216,7 @@ export class World {
       onToggleSound: () => { this.soundOn = !this.soundOn; this.sound.setMuted(!this.soundOn); this.sound.toggleAmbient(this.soundOn); this.hud.setSoundIcon(this.soundOn); },
       onHelp: () => this.showEconomyHelp(),
       onResearch: () => this.showResearch(),
+      onGeology: () => this.showGeology(),
     });
     this.hud.setMine(this.scenario.name);
     this.updateEconomy();
@@ -266,6 +274,51 @@ export class World {
   }
 
   /** A dismissible card explaining how the money loop works. */
+  /** Geology & exploration: survey to reveal grade, drill to delineate/extend the reserve. */
+  private showGeology() {
+    this.root.querySelector(".geologyCard")?.remove();
+    const el = document.createElement("div");
+    el.className = "whResult geologyCard";
+    const conf = Math.round(this.oreConfidence * 100);
+    const tier = this.oreConfidence >= 0.85 ? "Measured" : this.oreConfidence >= 0.6 ? "Indicated" : "Inferred";
+    const reserve = Math.round(this.supply.oreReserve.level).toLocaleString();
+    const cap = Math.round(this.supply.oreReserve.cap).toLocaleString();
+    const grade = this.explored ? `~$${MILL_NET_PER_T}/t milled (revealed)` : "unknown — run a survey";
+    const full = this.oreConfidence >= 0.99;
+    el.innerHTML = `<div class="introCard">
+      <div class="rsHead">🧭 Geology &amp; exploration</div>
+      <div class="pNote">Delineate the orebody before you commit. A survey reveals the grade; reserve-definition drilling raises confidence (Inferred → Indicated → Measured) and finds more ore to mine.</div>
+      <div class="pSplit"><span>Confidence</span><b>${conf}% · ${tier}</b></div>
+      <div class="pBar"><div class="pBarFill ${this.oreConfidence >= 0.85 ? "green" : "amber"}" style="width:${conf}%"></div></div>
+      <div class="pSplit"><span>Reserve (in ground / total)</span><b>${reserve} / ${cap} t</b></div>
+      <div class="pSplit"><span>Grade</span><b>${grade}</b></div>
+      <button class="pBtn ${this.explored ? "" : "primary"}" data-act="survey" ${this.explored ? "disabled" : ""}><b>Geophysical survey</b><span>${this.explored ? "already surveyed" : `reveal grade + first delineation · ${fmtMoney(SURVEY_COST)}`}</span></button>
+      <button class="pBtn ${full ? "" : "primary"}" data-act="drill" ${full ? "disabled" : ""}><b>Drill campaign</b><span>${full ? "orebody fully delineated (Measured)" : `+confidence, +reserve · ${fmtMoney(DRILL_COST)} · +${DRILL_DAYS} d`}</span></button>
+      <button class="pBtn" id="geoClose"><b>Close ▶</b></button>
+    </div>`;
+    this.root.appendChild(el);
+    el.querySelector("#geoClose")!.addEventListener("click", () => el.remove());
+    el.querySelector("[data-act='survey']")?.addEventListener("click", () => { this.runSurvey(); this.showGeology(); });
+    el.querySelector("[data-act='drill']")?.addEventListener("click", () => { this.drillCampaign(); this.showGeology(); });
+  }
+  private runSurvey() {
+    if (this.explored) return;
+    if (this.cash < SURVEY_COST) { this.hud.setStatus(`Not enough cash for a survey (${fmtMoney(SURVEY_COST)}).`); return; }
+    this.cash -= SURVEY_COST; this.explored = true; this.oreConfidence = Math.max(this.oreConfidence, 0.55);
+    this.updateEconomy(); this.saveGame();
+    this.hud.setStatus(`Geophysical survey complete — grade revealed (~$${MILL_NET_PER_T}/t), orebody delineation started.`);
+  }
+  private drillCampaign() {
+    if (this.oreConfidence >= 0.99) { this.hud.setStatus("Orebody already fully delineated (Measured)."); return; }
+    if (this.cash < DRILL_COST) { this.hud.setStatus(`Not enough cash to drill (${fmtMoney(DRILL_COST)}).`); return; }
+    this.cash -= DRILL_COST; this.day += DRILL_DAYS;
+    const find = Math.round(DRILL_FIND_BASE * (1 - this.oreConfidence)); // diminishing returns toward full confidence
+    this.oreConfidence = Math.min(1, this.oreConfidence + DRILL_CONF);
+    this.supply.oreReserve.level += find; this.supply.oreReserve.cap += find;
+    this.updateEconomy(); this.saveGame();
+    this.hud.setStatus(`Drill campaign — confidence ${Math.round(this.oreConfidence * 100)}%, +${find.toLocaleString()} t reserve delineated.`);
+  }
+
   private showEconomyHelp() {
     if (this.root.querySelector(".econHelp")) return;
     const el = document.createElement("div");
@@ -713,7 +766,7 @@ export class World {
     const cured = stopes.filter((s) => s.status === "cured").length;
     const passed = stopes.filter((s) => s.status === "cured" && s.ucsPass).length; // cured AND hit strength
     const onTime = stopes.filter((s) => s.status === "cured" && s.cureStartDay <= s.dueDay).length;
-    const minedFrac = 1 - this.supply.oreReserve.level / this.scenario.orebody; // how much of the orebody was monetised
+    const minedFrac = 1 - this.supply.oreReserve.level / Math.max(1, this.supply.oreReserve.cap); // how much of the (delineated) orebody was monetised
     let score = 0;
     score += passed === total ? 3 : passed >= total - 1 ? 2 : passed >= total / 2 ? 1 : 0;
     score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
@@ -750,12 +803,13 @@ export class World {
       day: this.day, speedIdx: this.speedIdx, cash: this.cash, opexPerDay: this.opexPerDay,
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
+      oreConfidence: this.oreConfidence, explored: this.explored,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
       plantThroughput: this.plantThroughput,
       recipe: { solids: this.recipe.solids, binder: this.recipe.binderKgPerM3 },
       supply: {
-        ore: this.supply.ore.level, oreReserve: this.supply.oreReserve.level,
+        ore: this.supply.ore.level, oreReserve: this.supply.oreReserve.level, oreReserveCap: this.supply.oreReserve.cap,
         tailings: this.supply.tailings.level, binder: this.supply.binder.level, water: this.supply.water.level,
         tsf: this.supply.tsf.level,
       },
@@ -784,11 +838,13 @@ export class World {
     this.day = s.day; this.speedIdx = s.speedIdx ?? 1; this.cash = s.cash; this.opexPerDay = s.opexPerDay;
     this.rp = s.rp || 0; this.research = new Set(s.research || []); this.opexMult = s.opexMult ?? 1;
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
+    this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.tempDeliveryMult = s.tempDeliveryMult ?? 1; this.tempDeliveryUntil = s.tempDeliveryUntil ?? 0;
     this.tempPourMult = s.tempPourMult ?? 1; this.tempPourUntil = s.tempPourUntil ?? 0;
     this.plantThroughput = s.plantThroughput ?? this.plantThroughput;
     if (s.recipe) { this.recipe.solids = s.recipe.solids; this.recipe.binderKgPerM3 = s.recipe.binder; }
     this.supply.ore.level = s.supply.ore; this.supply.oreReserve.level = s.supply.oreReserve;
+    if (s.supply.oreReserveCap) this.supply.oreReserve.cap = s.supply.oreReserveCap;
     this.supply.tailings.level = s.supply.tailings; this.supply.binder.level = s.supply.binder;
     this.supply.water.level = s.supply.water; this.supply.tsf.level = s.supply.tsf;
     this.paused = true; // resume paused so the player gets their bearings
