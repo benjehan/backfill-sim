@@ -474,6 +474,7 @@ export class World {
       this.scene.clearColor = new Color4(0.556, 0.772, 0.902, 1);
       this.scene.fogColor = Color3.FromHexString(SKY);
       this.scene.fogMode = Scene.FOGMODE_EXP2; this.scene.fogDensity = 0.0032;
+      if (this.hemi) this.applyWeatherVisuals(); // tint the surface sky by current weather
     }
   }
 
@@ -487,13 +488,29 @@ export class World {
     this.camera = cam;
   }
 
+  private hemi!: HemisphericLight;
+  private sun!: DirectionalLight;
   private setupLights() {
-    const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene);
-    hemi.intensity = 0.75; hemi.groundColor = Color3.FromHexString("#42502f");
-    const sun = new DirectionalLight("sun", new Vector3(-0.6, -1, -0.4), this.scene);
-    sun.position = new Vector3(90, 140, 70); sun.intensity = 1.1;
-    this.shadow = new ShadowGenerator(1024, sun);
+    this.hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene);
+    this.hemi.intensity = 0.75; this.hemi.groundColor = Color3.FromHexString("#42502f");
+    this.sun = new DirectionalLight("sun", new Vector3(-0.6, -1, -0.4), this.scene);
+    this.sun.position = new Vector3(90, 140, 70); this.sun.intensity = 1.1;
+    this.shadow = new ShadowGenerator(1024, this.sun);
     this.shadow.useBlurExponentialShadowMap = true; this.shadow.blurKernel = 16;
+  }
+  /** Tint the sky + light by the current weather (call only when on/entering surface). */
+  private applyWeatherVisuals() {
+    const P: Record<Weather, { sky: [number, number, number]; fog: string; hemi: number; sun: number }> = {
+      clear: { sky: [0.556, 0.772, 0.902], fog: "#8fb8da", hemi: 0.75, sun: 1.1 },
+      rain:  { sky: [0.42, 0.47, 0.52], fog: "#6a727a", hemi: 0.55, sun: 0.5 },
+      storm: { sky: [0.20, 0.22, 0.27], fog: "#31363d", hemi: 0.4, sun: 0.28 },
+      heat:  { sky: [0.74, 0.69, 0.55], fog: "#cbb890", hemi: 0.92, sun: 1.35 },
+      cold:  { sky: [0.62, 0.68, 0.74], fog: "#a2b2bf", hemi: 0.72, sun: 0.85 },
+    };
+    const p = P[this.weather];
+    this.scene.clearColor = new Color4(p.sky[0], p.sky[1], p.sky[2], 1);
+    this.scene.fogColor = Color3.FromHexString(p.fog);
+    this.hemi.intensity = p.hemi; this.sun.intensity = p.sun;
   }
 
   private createPortal(): Vector3 {
@@ -1172,6 +1189,7 @@ export class World {
     this.weatherUntil = this.day + 1 + pseudoNoise(this.day * 1.3) * 2.5; // 1–3.5 day spells
     this.underground.weatherCureMult = w === "heat" ? 0.85 : w === "cold" ? 1.18 : 1;
     this.hud.setWeather(this.weatherLabel());
+    if (this.mode === "surface") this.applyWeatherVisuals(); // live sky/light change
   }
   private weatherLabel(): string {
     const m: Record<Weather, string> = { clear: "☀ Clear", rain: "🌧 Rain", storm: "⛈ Storm", heat: "🔥 Heat", cold: "❄ Cold" };
