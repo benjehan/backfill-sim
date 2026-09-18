@@ -100,7 +100,40 @@ export class Underground {
     this.root = new TransformNode("underground", scene);
     this.build();
     this.net = new Reticulation(scene, this.root, shadow, scenario.depths);
+    this.buildLife();
     this.root.setEnabled(false);
+  }
+
+  // ---- underground life: LHD loaders shuttling the drives --------------------
+  private life: { root: TransformNode; y: number; x: number; dir: 1 | -1; speed: number; wait: number }[] = [];
+  private buildLife() {
+    for (let i = 0; i < LEVELS.length; i++) {
+      const root = new TransformNode("lhd" + i, this.scene); root.parent = this.root;
+      const body = MeshBuilder.CreateBox("lhdbody" + i, { width: 5, height: 2.2, depth: 2.6 }, this.scene);
+      body.material = mat(this.scene, "#e0a52e"); body.position.y = 1.4; body.parent = root;
+      const cab = MeshBuilder.CreateBox("lhdcab" + i, { width: 1.8, height: 1.6, depth: 2.4 }, this.scene);
+      cab.material = mat(this.scene, "#c98f26"); cab.position.set(-1.2, 2.6, 0); cab.parent = root;
+      const bucket = MeshBuilder.CreateBox("lhdbkt" + i, { width: 1.6, height: 1.6, depth: 3 }, this.scene);
+      bucket.material = mat(this.scene, "#8a939c"); bucket.position.set(3, 1.0, 0); bucket.parent = root;
+      const wm = mat(this.scene, "#1c2229");
+      for (const [wx, wz] of [[-1.6, 1.4], [1.6, 1.4], [-1.6, -1.4], [1.6, -1.4]] as const) {
+        const wl = MeshBuilder.CreateCylinder("lhdw" + i, { diameter: 1.4, height: 0.5, tessellation: 8 }, this.scene);
+        wl.rotation.z = Math.PI / 2; wl.material = wm; wl.position.set(wx, 0.7, wz); wl.parent = root;
+      }
+      root.getChildMeshes().forEach((m) => this.shadow.addShadowCaster(m as Mesh));
+      this.life.push({ root, y: LEVELS[i].y + 0.2, x: 8 + i * 6, dir: 1, speed: 6 + i * 1.5, wait: 0 });
+    }
+  }
+  /** Drive the LHDs back and forth along their level drives (called each frame underground). */
+  updateLife(dt: number) {
+    for (const v of this.life) {
+      if (v.wait > 0) { v.wait -= dt; continue; }
+      v.x += v.dir * v.speed * dt;
+      if (v.x >= 54) { v.x = 54; v.dir = -1; v.wait = 0.8; }
+      else if (v.x <= 6) { v.x = 6; v.dir = 1; v.wait = 1.2; }
+      v.root.position.set(v.x, v.y, 6);
+      v.root.rotation.y = v.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+    }
   }
 
   center() { return new Vector3(34, -34, 8); }

@@ -278,7 +278,7 @@ export class World {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
       this.advanceTime(dt);
       if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); if (this.pourPS) this.pourPS.emitRate = 0; }
-      else if (this.mode === "underground") this.updatePourFx();
+      else if (this.mode === "underground") { this.updatePourFx(); this.underground.updateLife(dt); }
       else if (this.pourPS) this.pourPS.emitRate = 0;
       this.scene.render();
     });
