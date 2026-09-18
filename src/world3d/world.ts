@@ -280,9 +280,9 @@ export class World {
     this.engine.runRenderLoop(() => {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
       this.advanceTime(dt);
-      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); if (this.pourPS) this.pourPS.emitRate = 0; }
-      else if (this.mode === "underground") { this.updatePourFx(); this.underground.updateLife(dt); }
-      else if (this.pourPS) this.pourPS.emitRate = 0;
+      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); if (this.pourPS) this.pourPS.emitRate = 0; this.steamPSes.forEach((p) => (p.emitRate = 16)); }
+      else if (this.mode === "underground") { this.updatePourFx(); this.underground.updateLife(dt); this.steamPSes.forEach((p) => (p.emitRate = 0)); }
+      else { if (this.pourPS) this.pourPS.emitRate = 0; this.steamPSes.forEach((p) => (p.emitRate = 0)); }
       this.scene.render();
     });
     window.addEventListener("resize", () => this.engine.resize());
@@ -1188,6 +1188,20 @@ export class World {
     this.opexPerDay += b.spec.opexPerDay;
     if (b.spec.spawnsWorkers) this.crew.add(b.spec.spawnsWorkers);
     if (b.spec.spawnsTrucks) { this.fleet.clear(); this.fleet.add(b.spec.spawnsTrucks, b.pos, this.portal); }
+    if (b.spec.type === "plant" || b.spec.type === "mill") this.addSteam(b.pos.x, b.pos.y + b.spec.markerY, b.pos.z); // venting steam plume
+  }
+  private steamPSes: ParticleSystem[] = [];
+  private addSteam(x: number, y: number, z: number) {
+    const ps = new ParticleSystem("steam" + this.steamPSes.length, 120, this.scene);
+    ps.particleTexture = this.getDot();
+    ps.emitter = new Vector3(x, y, z);
+    ps.minEmitBox = new Vector3(-1, 0, -1); ps.maxEmitBox = new Vector3(1, 0, 1);
+    ps.direction1 = new Vector3(-0.4, 3, -0.4); ps.direction2 = new Vector3(0.5, 4.5, 0.5);
+    ps.minSize = 1.6; ps.maxSize = 4.2; ps.minLifeTime = 1.6; ps.maxLifeTime = 3.4;
+    ps.gravity = new Vector3(0.6, 2.2, 0); ps.emitRate = 16;
+    ps.color1 = new Color4(0.92, 0.94, 0.97, 0.32); ps.color2 = new Color4(0.85, 0.88, 0.92, 0.0);
+    ps.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+    ps.start(); this.steamPSes.push(ps);
   }
 
   /** Advance every in-progress build by the elapsed game-days; complete + announce. */
