@@ -77,6 +77,8 @@ const TESTWORK_DAYS = 4;         // results lag reality — the program takes ti
 const ENV_PENALTY_PER_T = 42;    // fine per tonne of reactive (PAG) reject sent to the TSF uncontained
 const EXTRACT_ORE_PER_M3 = 2.4;  // t of ore mucked per m³ of void opened (reserve → ROM pad)
 const FLOWSHEET_SWITCH_COST = 3_000_000; // reconfiguring a concentrator route
+const PERMIT_BASE = 6_000_000;           // mining permit / regulatory approval to begin operations
+const PERMIT_ENV_SURCHARGE = 5_000_000;  // stricter conditions if reactive ore has no containment
 const DEV_BASE = 1_800_000;      // base capex to develop access to a stope early
 const DEV_PER_DAY = 180_000;     // extra per day brought forward (drives, drill/blast/muck)
 const SURVEY_COST = 800_000;     // geophysical survey — reveals grade, a first delineation
@@ -138,6 +140,7 @@ export class World {
   private opexPerDay = 0;
   private safetyIncidents = 0;
   private phase: "explore" | "setup" | "operate" = "explore"; // clock only runs in "operate"
+  private permitObtained = false; // regulatory permit to begin operations
   private testWorkDone = false; // a paid lab campaign that de-risks mix design (tightens UCS scatter)
   private lastGrade = "";
   private sound = new SoundKit();
@@ -996,7 +999,7 @@ export class World {
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
       oreConfidence: this.oreConfidence, explored: this.explored, drillHoles: this.drillHoles, weather: this.weather, weatherUntil: this.weatherUntil,
-      millGrind: this.millGrind, millRecovery: this.millRecovery, millReagent: this.millReagent, phase: this.phase,
+      millGrind: this.millGrind, millRecovery: this.millRecovery, millReagent: this.millReagent, phase: this.phase, permitObtained: this.permitObtained,
       staff: this.staff,
       tempDeliveryMult: this.tempDeliveryMult, tempDeliveryUntil: this.tempDeliveryUntil,
       tempPourMult: this.tempPourMult, tempPourUntil: this.tempPourUntil,
@@ -1035,7 +1038,7 @@ export class World {
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.drillHoles = s.drillHoles ?? 0; for (let i = 1; i <= this.drillHoles; i++) this.spawnDrillHole(i);
     this.millGrind = s.millGrind ?? 1; this.millRecovery = s.millRecovery ?? 1; this.millReagent = s.millReagent ?? 0;
-    this.phase = s.phase ?? "operate"; this.hud.setPhase(this.phase === "operate" ? "▶ Operating" : this.phase === "setup" ? "◑ Set up" : "◐ Explore");
+    this.phase = s.phase ?? "operate"; this.permitObtained = s.permitObtained ?? true; this.hud.setPhase(this.phase === "operate" ? "▶ Operating" : this.phase === "setup" ? "◑ Set up" : "◐ Explore");
     this.weather = s.weather ?? "clear"; this.weatherUntil = s.weatherUntil ?? 0;
     if (s.staff) for (const k of Object.keys(this.staff)) if (s.staff[k]) this.staff[k] = s.staff[k];
     this.underground.weatherCureMult = this.weather === "heat" ? 0.85 : this.weather === "cold" ? 1.18 : 1;
@@ -1288,8 +1291,17 @@ export class World {
     }
     this.refreshObjective(); // exploration is objective step 1 — advance once delineated
   }
-  /** Leave the untimed Set-up phase and start the operating clock. */
+  /** Cost of the mining permit — dearer if a reactive orebody has no containment. */
+  private permitCost() { return PERMIT_BASE + (this.scenario.mineralogy?.reactive && !this.hasControlledSlurry() ? PERMIT_ENV_SURCHARGE : 0); }
+  /** Leave the untimed Set-up phase and start the operating clock (needs the permit). */
   private startOperations() {
+    if (!this.permitObtained) {
+      const fee = this.permitCost();
+      if (this.cash < fee) { this.hud.setStatus(`Operations need a mining permit (${fmtMoney(fee)}) — not enough cash yet.`); return; }
+      this.cash -= fee; this.permitObtained = true; this.updateEconomy();
+      const surch = fee > PERMIT_BASE ? " (incl. an environmental surcharge — no PAG containment)" : "";
+      this.hud.setStatus(`Mining permit granted (−${fmtMoney(fee)})${surch}.`);
+    }
     this.phase = "operate"; this.paused = false; this.hud.setPhase("▶ Operating");
     this.refreshClock(); this.refreshObjective();
     this.hud.setStatus("Operations underway — the clock is now running. Fill stopes before their due dates.");
@@ -1516,7 +1528,8 @@ export class World {
     const disconnected = this.buildings.filter((b) => b.spec.supplies && this.isPowered(b) && !this.connected(b));
     if (disconnected.length) return `<span class="objStep">Connect</span>${disconnected.length} supply work(s) can't reach the plant (red line) — resite them within feed-line range.`;
     if (this.scenario.mineralogy?.reactive && !this.hasControlledSlurry()) return `<span class="objStep">Environment</span>This ore's reject is <b>reactive (PAG)</b> — build a <b>☣ Controlled slurry pond</b> to contain it, or face ongoing environmental fines.`;
-    return `<span class="objStep">Ready</span>You're set. Press <b>▶</b> to run time, then <b>⛏ go underground</b> to reticulate and pour.`;
+    if (!this.permitObtained) return `<span class="objStep">Ready</span>Set up. Press <b>▶</b> to obtain the <b>mining permit</b> (${fmtMoney(this.permitCost())}${this.permitCost() > PERMIT_BASE ? ", incl. environmental surcharge — build a ☣ Controlled slurry pond to cut it" : ""}) and begin operations.`;
+    return `<span class="objStep">Ready</span>Operating. <b>⛏ Go underground</b> to reticulate and pour; fill stopes before their due dates.`;
   }
   private refreshObjective() {
     if (this.tutorial && this.tutStep < this.tutSteps.length) { this.hud.setObjective(null); return; } // tutorial replaces the objective banner
@@ -2120,7 +2133,7 @@ export class World {
   debugUpgrade(type: string) { const b = this.buildings.find((x) => x.spec.type === type); if (b) { this.selectedBuilding = b; this.upgradeBuilding(); this.selectedBuilding = null; } }
   /** Drive the tutorial through every step to verify the gating advances. */
   debugTutTest() {
-    this.testWorkDone = true; this.phase = "operate";
+    this.testWorkDone = true; this.phase = "operate"; this.permitObtained = true;
     const L = (s: string) => console.log("TUT|" + s + ` step=${this.tutStep + 1}/${this.tutSteps.length}`);
     L("start");
     this.runSurvey(); this.drillCampaign(); this.drillCampaign(); this.checkTutorial(); L("delineated"); // exploration-first step
@@ -2133,7 +2146,7 @@ export class World {
   }
   /** Build a partial campaign and leave it autosaved (for save/resume testing). */
   debugSeed() {
-    this.testWorkDone = true; this.phase = "operate";
+    this.testWorkDone = true; this.phase = "operate"; this.permitObtained = true;
     for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
     this.debugBuildPlantLine(); this.debugUpgrade("mill"); this.descend();
     for (let k = 0; k < 8 && !this.ended; k++) {
@@ -2156,7 +2169,7 @@ export class World {
   /** Headless self-play: stand up the chain, then reticulate + pour every stope as it frees up,
    *  logging the economy each week. Drives the REAL game loop (not a projection). #autorun triggers it. */
   debugAutoRun() {
-    this.testWorkDone = true; this.phase = "operate";
+    this.testWorkDone = true; this.phase = "operate"; this.permitObtained = true;
     const L = (s: string) => console.log("AUTORUN|" + s);
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
@@ -2195,7 +2208,7 @@ export class World {
   /** Headless SKILLED self-play: pumpable-yet-strong mix, over-rated uniform lines with chokes,
    *  reinforce on geotech, raise the dam before it chokes the mill. Proves the game rewards skill. */
   debugSmartRun() {
-    this.testWorkDone = true; this.phase = "operate";
+    this.testWorkDone = true; this.phase = "operate"; this.permitObtained = true;
     const L = (s: string) => console.log("SMARTRUN|" + s);
     try {
       for (const [t, x, z] of [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36], ["waterpump", 30, 60]] as [string, number, number][]) this.debugBuild(t, x, z);
