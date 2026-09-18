@@ -86,6 +86,35 @@ export class SoundKit {
   /** A low rolling thunder boom (storms). */
   thunder() { this.go((t) => { this.blip("sine", 90, 26, t, 1.3, 0.6); this.noise(t, 1.2, 0.5, "lowpass", 420, 70); }); }
 
+  // ---- operations loops (hum + pour rush) -------------------------------------
+  private humGain: GainNode | null = null;
+  /** Low mechanical hum while the operation runs. */
+  setHum(level: number) {
+    this.resume(); if (!this.ctx || !this.master) return;
+    if (!this.humGain) {
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      const lp = this.ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 220;
+      for (const [type, f] of [["sine", 55], ["sawtooth", 82]] as [OscillatorType, number][]) {
+        const o = this.ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(lp); o.start();
+      }
+      lp.connect(g).connect(this.master); this.humGain = g;
+    }
+    this.humGain.gain.setTargetAtTime(level, this.ctx.currentTime, 0.9);
+  }
+  private rushGain: GainNode | null = null;
+  /** Slurry rush loop while a pour is running. */
+  setPourRush(level: number) {
+    this.resume(); if (!this.ctx || !this.master) return;
+    if (!this.rushGain) {
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuffer(2); src.loop = true;
+      const bp = this.ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 520; bp.Q.value = 0.7;
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      src.connect(bp).connect(g).connect(this.master); src.start();
+      this.rushGain = g;
+    }
+    this.rushGain.gain.setTargetAtTime(level, this.ctx.currentTime, 0.4);
+  }
+
   // ---- the game's palette -----------------------------------------------------
   build() { this.go((t) => { this.blip("sine", 150, 70, t, 0.16, 0.5); this.noise(t, 0.12, 0.25, "lowpass", 900, 200); }); }
   select() { this.go((t) => this.blip("triangle", 520, 520, t, 0.05, 0.2)); }

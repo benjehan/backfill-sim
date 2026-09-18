@@ -283,6 +283,8 @@ export class World {
       if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); if (this.pourPS) this.pourPS.emitRate = 0; this.steamPSes.forEach((p) => (p.emitRate = 16)); }
       else if (this.mode === "underground") { this.updatePourFx(); this.underground.updateLife(dt); this.steamPSes.forEach((p) => (p.emitRate = 0)); }
       else { if (this.pourPS) this.pourPS.emitRate = 0; this.steamPSes.forEach((p) => (p.emitRate = 0)); }
+      this.sound.setHum(this.phase === "operate" ? 0.05 : 0);
+      this.sound.setPourRush(this.anyPourActive() ? 0.12 : 0);
       this.scene.render();
     });
     window.addEventListener("resize", () => this.engine.resize());
@@ -2025,7 +2027,7 @@ export class World {
     this.hud.setPanel(`<div class="pHead">${st.id} <span data-act="close" class="pClose">✕</span></div>${meta}${basis}${body}`);
   }
 
-  private onPanelAction(act: string) { this.applyPanelAction(act); this.saveGame(); this.checkTutorial(); }
+  private onPanelAction(act: string) { this.sound.select(); this.applyPanelAction(act); this.saveGame(); this.checkTutorial(); }
   private applyPanelAction(act: string) {
     if (act === "restart") { location.reload(); return; }
     if (act === "tutskip" || act === "tutdone") { this.endTutorial(); return; }
