@@ -8,6 +8,8 @@ import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
+import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
+import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3, Quaternion } from "@babylonjs/core/Maths/math.vector";
@@ -470,6 +472,7 @@ export class World {
       this.scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
       this.scene.fogColor = Color3.FromHexString("#0a0d12");
       this.scene.fogMode = Scene.FOGMODE_EXP2; this.scene.fogDensity = 0.0032;
+      if (this.rainPS) this.rainPS.emitRate = 0; // no weather fx below ground / in plant
     } else {
       this.scene.clearColor = new Color4(0.556, 0.772, 0.902, 1);
       this.scene.fogColor = Color3.FromHexString(SKY);
@@ -511,6 +514,32 @@ export class World {
     this.scene.clearColor = new Color4(p.sky[0], p.sky[1], p.sky[2], 1);
     this.scene.fogColor = Color3.FromHexString(p.fog);
     this.hemi.intensity = p.hemi; this.sun.intensity = p.sun;
+    this.setWeatherFx();
+  }
+  private rainPS?: ParticleSystem;
+  private ensureWeatherFx() {
+    if (this.rainPS) return;
+    const tex = new DynamicTexture("dropTex", 16, this.scene, false);
+    const ctx = tex.getContext(); ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(8, 8, 6, 0, Math.PI * 2); ctx.fill(); tex.update();
+    const ps = new ParticleSystem("weatherfx", 1600, this.scene);
+    ps.particleTexture = tex;
+    ps.emitter = new Vector3(30, 90, 8);
+    ps.minEmitBox = new Vector3(-130, 0, -130); ps.maxEmitBox = new Vector3(130, 0, 130);
+    ps.direction1 = new Vector3(-1, -14, -1); ps.direction2 = new Vector3(1, -16, 1);
+    ps.minLifeTime = 3.5; ps.maxLifeTime = 5.5; ps.gravity = new Vector3(0, -60, 0);
+    ps.emitRate = 0; ps.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+    ps.start();
+    this.rainPS = ps;
+  }
+  /** Rain/storm/snow particles matched to the current weather (surface only). */
+  private setWeatherFx() {
+    this.ensureWeatherFx();
+    const ps = this.rainPS!;
+    const w = this.weather;
+    if (w === "rain") { ps.emitRate = 750; ps.gravity = new Vector3(0, -60, 0); ps.minSize = 0.3; ps.maxSize = 0.6; ps.color1 = new Color4(0.7, 0.8, 0.95, 0.6); ps.color2 = new Color4(0.6, 0.7, 0.85, 0.5); }
+    else if (w === "storm") { ps.emitRate = 1500; ps.gravity = new Vector3(-8, -78, 0); ps.minSize = 0.35; ps.maxSize = 0.7; ps.color1 = new Color4(0.62, 0.7, 0.85, 0.7); ps.color2 = new Color4(0.5, 0.6, 0.75, 0.6); }
+    else if (w === "cold") { ps.emitRate = 320; ps.gravity = new Vector3(2, -7, 1); ps.minSize = 0.4; ps.maxSize = 0.9; ps.color1 = new Color4(1, 1, 1, 0.95); ps.color2 = new Color4(0.9, 0.94, 1, 0.85); } // snow: slow, drifting, white
+    else ps.emitRate = 0;
   }
 
   private createPortal(): Vector3 {
