@@ -475,6 +475,7 @@ export class World {
       this.scene.fogColor = Color3.FromHexString("#0a0d12");
       this.scene.fogMode = Scene.FOGMODE_EXP2; this.scene.fogDensity = 0.0032;
       if (this.rainPS) this.rainPS.emitRate = 0; // no weather fx below ground / in plant
+      this.sound.setRain(0);
     } else {
       this.scene.clearColor = new Color4(0.556, 0.772, 0.902, 1);
       this.scene.fogColor = Color3.FromHexString(SKY);
@@ -548,6 +549,7 @@ export class World {
     else if (w === "storm") { ps.emitRate = 1500; ps.gravity = new Vector3(-8, -78, 0); ps.minSize = 0.35; ps.maxSize = 0.7; ps.color1 = new Color4(0.62, 0.7, 0.85, 0.7); ps.color2 = new Color4(0.5, 0.6, 0.75, 0.6); }
     else if (w === "cold") { ps.emitRate = 320; ps.gravity = new Vector3(2, -7, 1); ps.minSize = 0.4; ps.maxSize = 0.9; ps.color1 = new Color4(1, 1, 1, 0.95); ps.color2 = new Color4(0.9, 0.94, 1, 0.85); } // snow: slow, drifting, white
     else ps.emitRate = 0;
+    this.sound.setRain(w === "rain" ? 0.1 : w === "storm" ? 0.2 : 0);
   }
 
   private pourPS?: ParticleSystem;
@@ -1248,6 +1250,7 @@ export class World {
     this.underground.weatherCureMult = w === "heat" ? 0.85 : w === "cold" ? 1.18 : 1;
     this.hud.setWeather(this.weatherLabel());
     if (this.mode === "surface") this.applyWeatherVisuals(); // live sky/light change
+    if (w === "storm" && this.mode === "surface") this.sound.thunder();
   }
   private weatherLabel(): string {
     const m: Record<Weather, string> = { clear: "☀ Clear", rain: "🌧 Rain", storm: "⛈ Storm", heat: "🔥 Heat", cold: "❄ Cold" };

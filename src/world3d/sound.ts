@@ -69,6 +69,23 @@ export class SoundKit {
     fn(this.ctx.currentTime);
   }
 
+  // ---- weather ambience -------------------------------------------------------
+  private rainGain: GainNode | null = null;
+  /** Continuous rain hiss whose level tracks the weather (0 = off). */
+  setRain(level: number) {
+    this.resume(); if (!this.ctx || !this.master) return;
+    if (!this.rainGain) {
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuffer(2); src.loop = true;
+      const bp = this.ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1300; bp.Q.value = 0.5;
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      src.connect(bp).connect(g).connect(this.master); src.start();
+      this.rainGain = g;
+    }
+    this.rainGain.gain.setTargetAtTime(level, this.ctx.currentTime, 0.6); // smooth fade in/out
+  }
+  /** A low rolling thunder boom (storms). */
+  thunder() { this.go((t) => { this.blip("sine", 90, 26, t, 1.3, 0.6); this.noise(t, 1.2, 0.5, "lowpass", 420, 70); }); }
+
   // ---- the game's palette -----------------------------------------------------
   build() { this.go((t) => { this.blip("sine", 150, 70, t, 0.16, 0.5); this.noise(t, 0.12, 0.25, "lowpass", 900, 200); }); }
   select() { this.go((t) => this.blip("triangle", 520, 520, t, 0.05, 0.2)); }
