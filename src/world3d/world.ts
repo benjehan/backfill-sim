@@ -277,7 +277,9 @@ export class World {
     this.engine.runRenderLoop(() => {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
       this.advanceTime(dt);
-      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); }
+      if (this.mode === "surface") { this.crew.update(dt); this.fleet.update(dt, this.cafPourActive()); this.updateFlow(dt); if (this.pourPS) this.pourPS.emitRate = 0; }
+      else if (this.mode === "underground") this.updatePourFx();
+      else if (this.pourPS) this.pourPS.emitRate = 0;
       this.scene.render();
     });
     window.addEventListener("resize", () => this.engine.resize());
@@ -516,13 +518,19 @@ export class World {
     this.hemi.intensity = p.hemi; this.sun.intensity = p.sun;
     this.setWeatherFx();
   }
+  private dotTex?: DynamicTexture;
+  private getDot(): DynamicTexture {
+    if (!this.dotTex) {
+      this.dotTex = new DynamicTexture("dotTex", 16, this.scene, false);
+      const ctx = this.dotTex.getContext(); ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(8, 8, 6, 0, Math.PI * 2); ctx.fill(); this.dotTex.update();
+    }
+    return this.dotTex;
+  }
   private rainPS?: ParticleSystem;
   private ensureWeatherFx() {
     if (this.rainPS) return;
-    const tex = new DynamicTexture("dropTex", 16, this.scene, false);
-    const ctx = tex.getContext(); ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(8, 8, 6, 0, Math.PI * 2); ctx.fill(); tex.update();
     const ps = new ParticleSystem("weatherfx", 1600, this.scene);
-    ps.particleTexture = tex;
+    ps.particleTexture = this.getDot();
     ps.emitter = new Vector3(30, 90, 8);
     ps.minEmitBox = new Vector3(-130, 0, -130); ps.maxEmitBox = new Vector3(130, 0, 130);
     ps.direction1 = new Vector3(-1, -14, -1); ps.direction2 = new Vector3(1, -16, 1);
@@ -539,6 +547,27 @@ export class World {
     if (w === "rain") { ps.emitRate = 750; ps.gravity = new Vector3(0, -60, 0); ps.minSize = 0.3; ps.maxSize = 0.6; ps.color1 = new Color4(0.7, 0.8, 0.95, 0.6); ps.color2 = new Color4(0.6, 0.7, 0.85, 0.5); }
     else if (w === "storm") { ps.emitRate = 1500; ps.gravity = new Vector3(-8, -78, 0); ps.minSize = 0.35; ps.maxSize = 0.7; ps.color1 = new Color4(0.62, 0.7, 0.85, 0.7); ps.color2 = new Color4(0.5, 0.6, 0.75, 0.6); }
     else if (w === "cold") { ps.emitRate = 320; ps.gravity = new Vector3(2, -7, 1); ps.minSize = 0.4; ps.maxSize = 0.9; ps.color1 = new Color4(1, 1, 1, 0.95); ps.color2 = new Color4(0.9, 0.94, 1, 0.85); } // snow: slow, drifting, white
+    else ps.emitRate = 0;
+  }
+
+  private pourPS?: ParticleSystem;
+  private ensurePourFx() {
+    if (this.pourPS) return;
+    const ps = new ParticleSystem("poursplash", 500, this.scene);
+    ps.particleTexture = this.getDot();
+    ps.minEmitBox = new Vector3(-1.6, 0, -1.6); ps.maxEmitBox = new Vector3(1.6, 0, 1.6);
+    ps.direction1 = new Vector3(-2.5, 3, -2.5); ps.direction2 = new Vector3(2.5, 5, 2.5);
+    ps.minSize = 0.3; ps.maxSize = 0.8; ps.minLifeTime = 0.25; ps.maxLifeTime = 0.7;
+    ps.gravity = new Vector3(0, -20, 0); ps.emitRate = 0;
+    ps.color1 = new Color4(0.86, 0.62, 0.26, 0.9); ps.color2 = new Color4(0.72, 0.5, 0.2, 0.8); // wet paste splash
+    ps.start();
+    this.pourPS = ps;
+  }
+  /** Splash of paste at the top of the fill while a stope is pouring (underground view). */
+  private updatePourFx() {
+    this.ensurePourFx(); const ps = this.pourPS!;
+    const s = this.underground.stopes.find((x) => x.status === "pouring" && x.fillMesh.isEnabled());
+    if (s) { const p = s.fillMesh.getAbsolutePosition(); ps.emitter = new Vector3(p.x, p.y + (s.fillMesh.scaling.y * s.chamberH) / 2, p.z); ps.emitRate = 240; }
     else ps.emitRate = 0;
   }
 
