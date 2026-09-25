@@ -105,8 +105,8 @@ export class SupplyChain {
       if (tail > space + 1e-6) {
         const k = space <= 0 ? 0 : space / tail;
         want *= k; tail *= k;
-        notes.push(this.tsf.cap <= 0 ? "⚠ No TSF — nowhere for tailings, mill choked. Build a TSF."
-          : "⚠ TSF full — mill throttled. Raise the dam or build another TSF.");
+        notes.push(this.tsf.cap <= 0 ? "⚠ No tailings dam, so the mill has nowhere to put its waste and has stopped. Build a ⛰ Tailings dam (TSF)."
+          : "⚠ The tailings dam is full, so the mill has slowed down (less income). Click the ⛰ dam and press Raise the dam.");
       }
       // The mill throws two streams: a graded PASTE-FEED stream (suits backfill) and a
       // REJECT/fines stream. Only the paste feed competes for the plant buffer; the
@@ -123,9 +123,9 @@ export class SupplyChain {
       this.ore.level -= want;
       milled = want;
       revenue = milled * MILL_NET_PER_T;
-      if (this.tsf.cap > 0 && this.tsf.level > this.tsf.cap * 0.85) notes.push("TSF above 85% — plan a dam raise soon.");
+      if (this.tsf.cap > 0 && this.tsf.level > this.tsf.cap * 0.85) notes.push("⛰ The tailings dam is over 85% full. Raise the dam soon (click it) so the mill keeps running.");
     } else if (this.ore.level >= this.ore.cap - 1) {
-      notes.push("ROM pad full — no mill to process ore (no income). Build a Mill.");
+      notes.push("⚠ The ore pile is full and there is no Mill to turn it into money. Build a ⚙ Mill.");
     }
 
     // Binder arrives via the chosen supply mode (rail / haulage / isotainer) and costs
