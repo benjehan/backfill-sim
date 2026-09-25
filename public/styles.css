@@ -654,3 +654,18 @@ select, input[type=number] {
 .tutSkip { margin-top: 8px; background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; text-decoration: underline; pointer-events: auto; }
 .tutFinish { width: 200px; margin: 10px auto 0; text-align: center; }
 .tutFinish b { text-align: center; }
+
+/* difficulty picker (select screen) */
+.scDiff.deep { background: #6b3030; color: #f0cccc; }
+.scDiffPick { max-width: 720px; margin: 0 auto 22px; text-align: center; }
+.scDiffLabel { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); margin-bottom: 8px; }
+.scDiffBtns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.scDiffBtn { min-width: 150px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 18px; border-radius: 10px;
+  background: rgba(20,32,42,.9); border: 2px solid var(--line); color: var(--fg); cursor: pointer; transition: all .12s; }
+.scDiffBtn b { font-size: 16px; }
+.scDiffBtn span { font-size: 11px; color: var(--muted); }
+.scDiffBtn:hover { transform: translateY(-2px); }
+.scDiffBtn.easy.on { border-color: #39d98a; background: rgba(57,217,138,.16); }
+.scDiffBtn.normal.on { border-color: #ffb020; background: rgba(255,176,32,.14); }
+.scDiffBtn.hard.on { border-color: #ff6a5a; background: rgba(255,106,90,.14); }
+.scDiffBlurb { margin-top: 8px; font-size: 13px; color: var(--muted); }

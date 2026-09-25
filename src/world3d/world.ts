@@ -42,6 +42,8 @@ import { SupplyChain, tsfRaiseCost, TSF_MAX_RAISES, MILL_NET_PER_T } from "./sup
 import { SCENARIOS, type Scenario } from "./scenarios.js";
 import { loadCompany, saveCompany, legacyForGrade, hasPerk } from "./company.js";
 import { writeSave, clearSave, SAVE_VERSION } from "./savegame.js";
+import { CATALOG as PLANT_EQUIP } from "../plant/model.js";
+import { difficultyOf, applyDifficulty, applyCostScale, type Difficulty, type DifficultyId } from "./difficulty.js";
 
 const SKY = "#8ec5e6";
 const START_CASH = 150_000_000;
@@ -189,13 +191,29 @@ export class World {
   private tutorial = false;
   private tutStep = 0;
   private tutSteps: { text: string; done: () => boolean }[] = [];
-  constructor(private root: HTMLElement, private scenario: Scenario = SCENARIOS[0], opts?: { tutorial?: boolean }) {
+  // difficulty bundle (Hard = the original balance); the scenario is a difficulty-adjusted copy
+  private diff: Difficulty;
+  private rescuesUsed = 0;   // times the board has topped up the budget (Easy/Normal)
+  private loanBalance = 0;   // outstanding board loan (Normal), repaid from mill income
+  private cheered = new Set<string>(); // one-off milestone celebrations already shown
+  private autoEasedDay = -1; // last day the safety crew stepped in (throttles the message)
+  constructor(private root: HTMLElement, private scenario: Scenario = SCENARIOS[0], opts?: { tutorial?: boolean; difficulty?: DifficultyId }) {
     this.tutorial = !!opts?.tutorial;
+    this.diff = difficultyOf(opts?.difficulty ?? "hard");
+    this.scenario = applyDifficulty(scenario, this.diff);
   }
+  /** Capital cost at this difficulty (build multiplier). */
+  private capex(n: number) { return Math.round(n * this.diff.build); }
+  /** Exploration / test-work cost at this difficulty. */
+  private exploreCost(n: number) { return Math.round(n * this.diff.explore); }
+  /** Penalty / incident / event cost at this difficulty. */
+  private penalty(n: number) { return Math.round(n * this.diff.penalties); }
 
   start() {
     this.root.classList.add("world-mode");
     const co = loadCompany(); // permanent perks from past campaigns
+    applyCostScale(this.diff.build); // difficulty-scaled capital prices (palette, plant line, pipes)
+    this.recipe.binderKgPerM3 = this.diff.startBinder; // Easy/Normal start the Lab on a stronger mix
     this.cash = Math.round(this.scenario.startCash * (hasPerk(co, "seed") ? 1.15 : 1));
     this.rp = hasPerk(co, "veterans") ? 8 : 0;
     this.opexMult = hasPerk(co, "lean") ? 0.92 : 1;
@@ -231,6 +249,8 @@ export class World {
     );
     this.fleet = new TruckFleet(this.scene, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot);
     this.underground = new Underground(this.scene, this.shadow, this.scenario);
+    this.underground.net.capexScale = this.diff.build;
+    this.underground.cureFactor = this.diff.cure;
     this.plantInterior = new PlantInterior(
       this.scene, this.shadow, this.root,
       () => this.exitPlant(),
@@ -257,9 +277,10 @@ export class World {
       onLab: () => { const r = this.activeRecipe(); this.hud.setLabRecipe(r.solids, r.binderKgPerM3); this.hud.toggleLab(this.labReadout()); },
       onRecipe: (solids, binder) => { const r = this.activeRecipe(); r.solids = solids; r.binderKgPerM3 = binder; this.hud.setLabReadout(this.labReadout()); if (this.mode === "underground" && this.selectedStope) this.renderStopePanel(); },
       onBinderTopup: () => {
-        if (this.cash < BINDER_TOPUP_COST) { this.hud.setStatus(`Not enough cash for a binder truck top-up (${fmtMoney(BINDER_TOPUP_COST)}).`); return; }
-        this.cash -= BINDER_TOPUP_COST; this.supply.topUpBinder(BINDER_TOPUP_TONNES);
-        this.updateEconomy(); this.hud.setStatus(`Binder truck top-up: +${BINDER_TOPUP_TONNES} t for ${fmtMoney(BINDER_TOPUP_COST)}.`);
+        const topup = this.topupCost();
+        if (this.cash < topup) { this.hud.setStatus(`Not enough cash for a binder truck top-up (${fmtMoney(topup)}).`); return; }
+        this.cash -= topup; this.supply.topUpBinder(BINDER_TOPUP_TONNES);
+        this.updateEconomy(); this.hud.setStatus(`Binder truck top-up: +${BINDER_TOPUP_TONNES} t for ${fmtMoney(topup)}.`);
       },
       onToggleSound: () => { this.soundOn = !this.soundOn; this.sound.setMuted(!this.soundOn); this.sound.toggleAmbient(this.soundOn); this.hud.setSoundIcon(this.soundOn); },
       onHelp: () => this.showEconomyHelp(),
@@ -293,6 +314,8 @@ export class World {
     if (typeof location !== "undefined" && location.hash.startsWith("#smartrun")) setTimeout(() => this.debugSmartRun(), 400);
     if (typeof location !== "undefined" && location.hash.startsWith("#seed")) setTimeout(() => this.debugSeed(), 400);
     if (typeof location !== "undefined" && location.hash.startsWith("#tuttest")) setTimeout(() => this.debugTutTest(), 400);
+    if (typeof location !== "undefined" && location.hash.startsWith("#playsmart")) setTimeout(() => this.debugPlayRun("smart"), 400);
+    if (typeof location !== "undefined" && location.hash.startsWith("#playnaive")) setTimeout(() => this.debugPlayRun("naive"), 400);
   }
 
   /** Research lab: spend RP on permanent campaign perks. */
@@ -320,7 +343,7 @@ export class World {
   private buyTech(id: string) {
     const t = TECHS.find((x) => x.id === id); if (!t || this.research.has(id) || this.rp < t.cost) return;
     this.rp -= t.cost; this.research.add(id); this.sound.pass();
-    if (id === "rapidset") this.underground.cureFactor = 0.75;
+    if (id === "rapidset") this.underground.cureFactor = 0.75 * this.diff.cure;
     if (id === "reserves") { this.supply.oreReserve.level += 50_000; this.supply.oreReserve.cap += 50_000; }
     this.refreshSupply(); this.updateEconomy(); // dam-eng recomputes TSF cap
     this.hud.setStatus(`Researched: ${t.name}.`);
@@ -396,8 +419,8 @@ export class World {
       <div class="pSplit"><span>Reserve (in ground / total)</span><b>${reserve} / ${cap} t</b></div>
       <div class="pSplit"><span>Grade</span><b>${grade}</b></div>
       <div class="pSplit"><span>Drill holes</span><b>${this.drillHoles}</b></div>
-      <button class="pBtn ${this.explored ? "" : "primary"}" data-act="survey" ${this.explored ? "disabled" : ""}><b>Geophysical survey</b><span>${this.explored ? "already surveyed" : `reveal grade + first delineation · ${fmtMoney(SURVEY_COST)}`}</span></button>
-      <button class="pBtn ${full ? "" : "primary"}" data-act="drill" ${full ? "disabled" : ""}><b>Drill campaign</b><span>${full ? "orebody fully delineated (Measured)" : `+confidence, +reserve · ${fmtMoney(DRILL_COST)} · +${DRILL_DAYS} d`}</span></button>
+      <button class="pBtn ${this.explored ? "" : "primary"}" data-act="survey" ${this.explored ? "disabled" : ""}><b>Geophysical survey</b><span>${this.explored ? "already surveyed" : `reveal grade + first delineation · ${fmtMoney(this.exploreCost(SURVEY_COST))}`}</span></button>
+      <button class="pBtn ${full ? "" : "primary"}" data-act="drill" ${full ? "disabled" : ""}><b>Drill campaign</b><span>${full ? "orebody fully delineated (Measured)" : `+confidence, +reserve · ${fmtMoney(this.exploreCost(DRILL_COST))} · +${DRILL_DAYS} d`}</span></button>
       <button class="pBtn" id="geoClose"><b>Close ▶</b></button>
     </div>`;
     this.root.appendChild(el);
@@ -407,8 +430,9 @@ export class World {
   }
   private runSurvey() {
     if (this.explored) return;
-    if (this.cash < SURVEY_COST) { this.hud.setStatus(`Not enough cash for a survey (${fmtMoney(SURVEY_COST)}).`); return; }
-    this.cash -= SURVEY_COST; this.explored = true; this.oreConfidence = Math.max(this.oreConfidence, 0.55);
+    const cost = this.exploreCost(SURVEY_COST);
+    if (this.cash < cost) { this.hud.setStatus(`Not enough cash for a survey (${fmtMoney(cost)}).`); return; }
+    this.cash -= cost; this.explored = true; this.oreConfidence = Math.max(this.oreConfidence, 0.55);
     this.refreshGradeKnowledge(); this.updateEconomy(); this.saveGame();
     this.hud.setStatus(`Geophysical survey complete — grade revealed (~$${MILL_NET_PER_T}/t), orebody delineation started.`);
   }
@@ -426,8 +450,9 @@ export class World {
   }
   private drillCampaign() {
     if (this.oreConfidence >= 0.99) { this.hud.setStatus("Orebody already fully delineated (Measured)."); return; }
-    if (this.cash < DRILL_COST) { this.hud.setStatus(`Not enough cash to drill (${fmtMoney(DRILL_COST)}).`); return; }
-    this.cash -= DRILL_COST; this.day += DRILL_DAYS; this.drillHoles++; this.spawnDrillHole(this.drillHoles);
+    const cost = this.exploreCost(DRILL_COST);
+    if (this.cash < cost) { this.hud.setStatus(`Not enough cash to drill (${fmtMoney(cost)}).`); return; }
+    this.cash -= cost; this.day += DRILL_DAYS; this.drillHoles++; this.spawnDrillHole(this.drillHoles);
     const find = Math.round(DRILL_FIND_BASE * (1 - this.oreConfidence)); // diminishing returns toward full confidence
     this.oreConfidence = Math.min(1, this.oreConfidence + DRILL_CONF);
     this.supply.oreReserve.level += find; this.supply.oreReserve.cap += find;
@@ -692,11 +717,27 @@ export class World {
         const noise = Math.sin(this.day * 41.3 + s.depthM) * 0.06;
         const fScale = frictionScale(this.recipeFor(s).solids) * (this.research.has("rheology") ? 0.85 : 1);
         s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, f, s.plugDrift, s.cls.ratingMpa, noise, fScale);
-        if (s.pressureMpa > s.cls.ratingMpa) {
+        const limit = this.pourLimitMpa(s) * this.diff.pressureTol; // Easy/Normal pipes have a little extra margin
+        if (this.diff.autoSafety && s.pressureMpa > limit * 0.85) {
+          // Easy: the safety crew spots the pressure climbing and flushes + eases the line before it bursts
+          s.plugDrift = Math.max(0, s.plugDrift - 0.5); if (s.flowFactor > 1) s.flowFactor = 1;
+          s.pressureMpa = pourPressureMpa(s.depthM, s.lengthM, s.choke, s.flowFactor, s.plugDrift, s.cls.ratingMpa, noise, fScale);
+          this.safetyAssist(`Pressure was climbing in the ${s.id} line, so your safety crew flushed it and eased the flow. Tip: a low-solids start and a steady flow keep pressure down.`);
+        }
+        if (s.pressureMpa > limit) {
+          const pen = this.penalty(BURST_PENALTY);
+          this.burstCount.set(s.id, (this.burstCount.get(s.id) ?? 0) + 1);
           this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
-          this.underground.burst(s); this.safetyIncidents++; this.cash -= BURST_PENALTY; this.sound.burst();
-          this.hud.setStatus(`⚠ ${s.id} LINE BURST at ${s.cls.ratingMpa} MPa — pour aborted, line isolated. Re-pour needed (−${fmtMoney(BURST_PENALTY)}).`);
+          this.underground.burst(s); this.safetyIncidents++; this.cash -= pen; this.sound.burst();
+          const again = (this.burstCount.get(s.id) ?? 0) > 1;
+          this.hud.setStatus(again
+            ? `⚠ ${s.id} line burst again: the pipe is too weak for this depth. Cost ${fmtMoney(pen)}. Pour a thinner mix (lower solids in the 🧪 Lab), keep the flow low, or use stronger pipe on the next stope.`
+            : `⚠ ${s.id} line burst (pressure went over the pipe's ${s.cls.ratingMpa} MPa rating). Cost ${fmtMoney(pen)}. The pipes are fine: press Pour again, tick the low-solids start, keep the flow steady, and flush if pressure climbs.`);
           continue;
+        }
+        if (s.plugDrift > 0.45 && s.pressureMpa > limit * 0.75 && Math.floor(this.day) !== this.plugWarnDay) { // warn before it bursts
+          this.plugWarnDay = Math.floor(this.day);
+          this.hud.setStatus(`⚠ ${s.id} line is starting to plug and pressure is rising (${s.pressureMpa.toFixed(1)} of ${limit.toFixed(0)} MPa). Press Flush and keep the flow near 1.0×.`);
         }
         this.underground.net.flowPulse(this.underground.stopes.indexOf(s), this.day); // paste flowing down the line
       } else {
@@ -711,12 +752,12 @@ export class World {
       const draw = this.supply.drawForPour(want, binderNeed); // throttles to the scarcest of tailings/water/binder
       const delta = draw.m3;
       if (draw.limiting && Math.floor(this.day) !== this.lastDayShown) {
-        const fix = draw.limiting === "binder" ? "order a truck top-up or build the Rail terminal"
-          : draw.limiting === "tailings" ? "the Mill can't keep the buffer fed" : "the pond is dry — check the Water pump";
-        this.hud.setStatus(`⚠ ${s.id} pour throttled — out of ${draw.limiting} (${fix}).`);
+        this.hud.setStatus(draw.limiting === "binder" ? `⚠ ${s.id} pour slowed: the binder silo is empty. Order a truck top-up (binder button) or build a binder supply.`
+          : draw.limiting === "tailings" ? `⏳ ${s.id} pour slowed: waiting for tailings from the Mill. Upgrading the ⚙ Mill makes more.`
+          : `⚠ ${s.id} pour slowed: the water pond is dry. Check the 💧 Water pump is built and powered.`);
       }
       s.placedM3 += delta;
-      this.cash -= recipeCostPerM3(this.recipeFor(s)) * fill.costMult * delta;
+      this.cash -= recipeCostPerM3(this.recipeFor(s)) * fill.costMult * delta * this.diff.binderCost;
 
       // Barricade loading (GDD 09): the rate of rise loads the barricade until the
       // plug sets and isolates it. Pour the plug too fast and it fails — inrush.
@@ -726,6 +767,14 @@ export class World {
       const fluidMult = fill.reticulated ? 1 : 0.35; // trucked CAF exerts little fluid head
       s.barricadeKpa = (BAR_RISE_K * s.flowFactor + BAR_HEAD_K * bfrac) * preSet * fluidMult;
       const cap = this.barricadeCap(s);
+      if (this.diff.autoSafety && cap > 0 && preSet > 0 && s.barricadeKpa > cap * 0.85) {
+        // Easy: geotech watches the barricade gauge and slows the pour until the plug sets
+        s.flowFactor = Math.max(0.5, s.flowFactor - 0.25); this.autoEased.add(s.id);
+        s.barricadeKpa = (BAR_RISE_K * s.flowFactor + BAR_HEAD_K * bfrac) * preSet * fluidMult;
+        this.safetyAssist(`The ${s.id} barricade was getting heavy, so your geotech slowed the pour until the plug sets. Tip: pour the first part slowly.`);
+      } else if (this.autoEased.has(s.id) && s.plugSet >= 1) {
+        s.flowFactor = 1; this.autoEased.delete(s.id); // plug has set: back to full speed
+      }
       // grace: the barricade tolerates a brief overload — ease the flow and it recovers
       if (cap > 0 && s.barricadeKpa > cap) s.barricadeOver += dd;
       else s.barricadeOver = Math.max(0, s.barricadeOver - dd * 2);
@@ -734,11 +783,13 @@ export class World {
         this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
         this.underground.inrush(s); this.sound.burst();
         if (s.exclusionZone) {
-          this.cash -= INRUSH_PENALTY * 0.4;
-          this.hud.setStatus(`⚠ ${s.id} INRUSH — barricade failed, but the exclusion zone contained it (no injuries). Rebuild & re-pour (−${fmtMoney(INRUSH_PENALTY * 0.4)}).`);
+          const pen = this.penalty(INRUSH_PENALTY * 0.4);
+          this.cash -= pen;
+          this.hud.setStatus(`⚠ ${s.id} barricade gave way, but the exclusion zone kept everyone safe. Cost ${fmtMoney(pen)}. Pick a barricade again and pour the start more slowly.`);
         } else {
-          this.cash -= INRUSH_PENALTY; this.safetyIncidents++;
-          this.hud.setStatus(`⚠ ${s.id} INRUSH — barricade failed and paste ran into the drive. Safety incident. Rebuild & re-pour (−${fmtMoney(INRUSH_PENALTY)}).`);
+          const pen = this.penalty(INRUSH_PENALTY);
+          this.cash -= pen; this.safetyIncidents++;
+          this.hud.setStatus(`⚠ ${s.id} barricade gave way and paste ran into the drive (a safety incident). Cost ${fmtMoney(pen)}. Pick a stronger barricade (shotcrete, with relief) and pour the start slowly.`);
         }
         continue;
       }
@@ -746,28 +797,37 @@ export class World {
       if (s.placedM3 >= s.volumeM3) {
         this.underground.net.clearFlow(this.underground.stopes.indexOf(s));
         this.underground.completePour(s, this.day);
-        this.cash += fillRevenue(s.volumeM3); this.sound.cash();
-        this.hud.setStatus(`${s.id} ${fill.label} complete — ${fmtMoney(fillRevenue(s.volumeM3))} ore access unlocked. Curing now.`);
+        const fillRev = Math.round(fillRevenue(s.volumeM3) * this.diff.revenue);
+        this.cash += fillRev; this.sound.cash();
+        this.hud.setStatus(`${s.id} ${fill.label} complete: ${fmtMoney(fillRev)} ore access unlocked. Curing now.`);
+        this.cheer("firstpour", `🎉 Your first stope is full! ${s.id} earned ${fmtMoney(fillRev)}. It cures now, then its strength gets tested.`);
         if (s.barricadeRisk && Math.abs(Math.sin(s.depthM * 12.9 + s.volumeM3)) > 0.5) {
-          this.safetyIncidents++; this.cash -= 900_000; this.sound.burst();
-          this.hud.setStatus(`⚠ ${s.id} barricade seepage on fill — spill contained, but geotech was right (−${fmtMoney(900_000)}).`);
+          const pen = this.penalty(900_000);
+          this.safetyIncidents++; this.cash -= pen; this.sound.burst();
+          this.hud.setStatus(`⚠ ${s.id} barricade seeped as it filled. The spill was contained, but geotech was right (cost ${fmtMoney(pen)}). Next time, reinforce when geotech asks.`);
         }
       }
     }
 
     // surface materials economy: hoist ore, mill it (concentrate income + tailings), route to TSF, deliver binder, pump water
-    const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1);
+    const deliveryMult = (this.day < this.tempDeliveryUntil ? this.tempDeliveryMult : 1) * (this.scenario.binder?.deliveryMult ?? 1) * this.diff.binderDelivery;
     const sup = this.supply.tick(dd, this.supplyState(), deliveryMult, this.plantThroughput > 0 ? 0.6 : 0, this.millPasteFrac());
     this.lastWaterReused = dd > 0 ? sup.waterReused / dd : 0; // m³/day recovered, for the HUD
-    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1) * this.millRecoveryMult() * this.millReagentMult();
+    const revenue = sup.revenue * (this.research.has("recovery") ? 1.15 : 1) * this.millRecoveryMult() * this.millReagentMult() * this.diff.revenue;
     const modeCostMult = this.activeBinderMode()?.costMult ?? 1; // haulage/isotainer cost more per tonne
-    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult;
+    const binderCost = sup.binderCost * (this.research.has("binder") ? 0.7 : 1) * (this.scenario.binder?.costMult ?? 1) * modeCostMult * this.diff.binderCost;
     this.cash += revenue - binderCost;
+    if (this.loanBalance > 0 && revenue > 0) { // board loan (Normal) is repaid from a quarter of mill income
+      const repay = Math.min(this.loanBalance, revenue * 0.25);
+      this.loanBalance -= repay; this.cash -= repay;
+      if (this.loanBalance <= 1) { this.loanBalance = 0; this.hud.setStatus("🎉 Board loan fully repaid. Nice work!"); }
+    }
+    if (revenue > 0) this.cheer("income", "🎉 The mill is making money! Ore is turning into cash every day. Watch the cash counter go up.");
     // Reactive (PAG/reagent) reject sent to the TSF without a lined controlled-slurry
     // facility is an environmental breach — an ongoing fine until you contain it.
     const minl = this.scenario.mineralogy;
     if (minl?.reactive && sup.rejectStreamT > 0 && !this.hasControlledSlurry()) {
-      const fine = ENV_PENALTY_PER_T * sup.rejectStreamT;
+      const fine = ENV_PENALTY_PER_T * sup.rejectStreamT * this.diff.fines;
       this.cash -= fine; this.envFinesTotal += fine; this.envBreachActive = true;
       if (Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(`☣ ${minl.label} reject to the TSF uncontained — environmental fine. Build a ☣ Controlled slurry pond to contain the PAG reject.`);
     } else this.envBreachActive = false;
@@ -775,11 +835,12 @@ export class World {
     this.millDayIncome = dd > 0 ? revenue / dd : 0; // $/day for the HUD readout
     if (sup.notes.length && Math.floor(this.day) !== this.lastDayShown) this.hud.setStatus(sup.notes[0]);
     const ev = this.underground.updateSchedule(this.day);
-    this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * this.opexMult * dd; // daily running cost
-    this.cash -= this.crewWagesPerDay() * dd; // crew wages
-    this.cash -= this.flowsheetOpexPerDay() * dd; // concentrator flowsheet power/reagents
-    if (this.scenario.wet) this.cash -= this.scenario.wet.dewaterPerDay * dd; // pumping the flooded workings out
-    this.cash -= LATE_COST_PER_DAY * ev.overdue.length * dd;             // overdue stopes stall mining
+    this.cash -= (BASE_OPEX_PER_DAY + this.opexPerDay) * this.opexMult * this.diff.opex * dd; // daily running cost
+    this.cash -= this.crewWagesPerDay() * this.diff.opex * dd; // crew wages
+    this.cash -= this.flowsheetOpexPerDay() * this.diff.opex * dd; // concentrator flowsheet power/reagents
+    if (this.scenario.wet) this.cash -= this.scenario.wet.dewaterPerDay * dd; // pumping the flooded workings out (difficulty-scaled in the scenario)
+    this.cash -= LATE_COST_PER_DAY * this.diff.fines * ev.overdue.length * dd; // overdue stopes stall mining
+    if (ev.overdue.length && Math.floor(this.day) !== this.lastDayShown && Math.floor(this.day) % 3 === 0) this.hud.setStatus(`⏰ ${ev.overdue.map((s) => s.id).join(", ")} ${ev.overdue.length > 1 ? "are" : "is"} past the due date and costing ${fmtMoney(LATE_COST_PER_DAY * this.diff.fines)}/day each. Go underground, build the pipes and pour ${ev.overdue.length > 1 ? "them" : "it"}.`);
     for (const s of ev.newlyAvailable) { const ore = this.grantExtractionOre(s); this.hud.setStatus(`${s.id} mucked out at −${s.depthM} m — ${Math.round(ore).toLocaleString()} t ore to the ROM pad, void ready to reticulate (due day ${s.dueDay}).`); }
     // 7-day early cylinder — the course's mid-cure warning that a recipe is short
     for (const s of this.underground.stopes) {
@@ -796,7 +857,10 @@ export class World {
       s.ucsPass = achieved >= s.targetUcsKpa;
       this.rp += 3; // a handed-back stope teaches the crew
       s.ucsPass ? this.sound.pass() : this.sound.fail();
-      this.hud.setStatus(`${s.id} 28-day cylinder ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa — ${s.ucsPass ? "PASS ✓" : "FAIL ✗ (geotech won't sign the hand-back)"}.`);
+      this.hud.setStatus(s.ucsPass
+        ? `${s.id} strength test: ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa. PASS ✓`
+        : `${s.id} strength test: ${s.ucsAchievedKpa}/${s.targetUcsKpa} kPa. Not strong enough ✗. Next time add more binder in the 🧪 Lab (aim above the target).`);
+      if (s.ucsPass) this.cheer("firstpass", `🎉 ${s.id} passed its strength test! The stope is safe and handed back to the miners.`);
     }
     this.updateEconomy();
 
@@ -810,6 +874,80 @@ export class World {
 
   private pourMult() { return this.day < this.tempPourUntil ? this.tempPourMult : 1; }
 
+  // ---- difficulty helpers: safety assist, celebrations, board rescue ---------
+  private autoEased = new Set<string>(); // stopes whose flow the Easy safety crew slowed
+  private plugWarnDay = -1;
+  private burstCount = new Map<string, number>(); // bursts per stope (repeat bursts get a different hint)
+  /** Burst limit for a live pour. Hard: the whole stope's pressure against the weakest leg
+   *  on the path. Easy/Normal (leg-aware): each leg only has to hold the pressure it
+   *  actually sees, so a line whose every leg is ✓ in the designer won't burst at a
+   *  steady pour; the limit is the smallest leg margin carried down to the stope. */
+  private pourLimitMpa(s: StopeUG): number {
+    if (!s.cls) return 0;
+    if (!this.diff.legAware) return s.cls.ratingMpa;
+    const net = this.underground.net; const path = net.pathFor(this.underground.stopes.indexOf(s));
+    let margin = Infinity;
+    for (const g of path) { const c = net.cls(g); if (c) margin = Math.min(margin, c.ratingMpa - net.pressureMpa(g)); }
+    const atStope = net.pressureMpa(path[path.length - 1]);
+    return Number.isFinite(margin) ? Math.max(s.cls.ratingMpa, atStope + margin) : s.cls.ratingMpa;
+  }
+  /** One-click safe pipe design (Easy/Normal): the cheapest valid class on every unbuilt leg,
+   *  adding borehole chokes only if a leg can't be made safe without them. */
+  private autoDesignPath(i: number): boolean {
+    const net = this.underground.net;
+    const legs = () => net.pathFor(i).filter((g) => !g.built);
+    const spec = () => { let ok = true; for (const g of legs()) { g.classId = 0; while (g.classId < 3 && !net.valid(g)) g.classId++; if (!net.valid(g)) ok = false; } return ok; };
+    for (const g of legs()) if (g.kind === "borehole") g.choke = false;
+    if (spec()) return true;
+    for (const g of legs()) if (g.kind === "borehole") g.choke = true; // shed static head on the deep legs
+    return spec();
+  }
+  private eventResume = true;            // resume the clock when the active event card is answered
+  topupCost() { return Math.round(BINDER_TOPUP_COST * this.diff.binderCost); }
+  /** Easy-mode safety crew stepped in: tell the player once a day, kindly. */
+  private safetyAssist(msg: string) {
+    const d = Math.floor(this.day); if (d === this.autoEasedDay) return;
+    this.autoEasedDay = d; this.hud.setStatus(`🦺 ${msg}`);
+  }
+  /** One-off milestone celebration (first income, first full stope, first pass...). */
+  private cheer(key: string, msg: string) {
+    if (this.cheered.has(key)) return;
+    this.cheered.add(key); this.hud.setStatus(msg); this.sound.pass();
+  }
+  /** Cash the player needs right now to keep going: the next required build (or the
+   *  permit) while setting up, or simply staying above zero once operating. */
+  private cashNeeded(): number {
+    if (this.phase === "operate") return 0;
+    const has = (t: string) => this.buildings.some((b) => b.spec.type === t);
+    if (!this.explored || this.oreConfidence < 0.7) return this.exploreCost(this.explored ? DRILL_COST : SURVEY_COST);
+    const need: string[] = ["power", "plant", "mill", "tsf"];
+    for (const t of need) if (!has(t)) return specOf(t).cost;
+    if (!(has("rail") || has("haulage") || has("isotainer"))) return specOf("isotainer").cost;
+    if (!this.scenario.wet && !has("waterpump")) return specOf("waterpump").cost;
+    return this.permitObtained ? 0 : this.permitCost();
+  }
+  /** Easy/Normal: when money runs out, the board steps in (a grant on Easy, a loan on
+   *  Normal) instead of leaving the player stuck. Hard has no safety net. */
+  private maybeRescue() {
+    if (this.ended || this.activeEvent || this.rescuesUsed >= this.diff.rescues) return;
+    const need = this.cashNeeded();
+    if (this.cash >= 0 && this.cash >= need) return;
+    const amount = Math.max(this.diff.rescueAmount, Math.ceil((need - this.cash + 8_000_000) / 1e6) * 1e6);
+    const loan = this.diff.rescueIsLoan;
+    const left = this.diff.rescues - this.rescuesUsed - 1;
+    const always = this.diff.rescues >= 99;
+    this.fireEvent({
+      id: `rescue${this.rescuesUsed + 1}`, title: loan ? "The board offers a loan" : "The board sends help",
+      body: loan
+        ? `Money is running low (${fmtMoney(this.cash)}). The board will lend you <b>${fmtMoney(amount)}</b> so you can keep going. It is paid back automatically from a quarter of your mill income, plus 10%. ${left > 0 ? `They can help ${left} more time${left > 1 ? "s" : ""}.` : "This is their last offer, so spend carefully."}`
+        : `You're running low on money (${fmtMoney(this.cash)}). The board believes in you and is sending <b>${fmtMoney(amount)}</b> so you can keep building. ${always ? "" : left > 0 ? `They can help ${left} more time${left > 1 ? "s" : ""}.` : "This is the last top-up, so spend carefully."} Tip: the ⚙ Mill makes money every day, so build it early.`,
+      options: [{ label: loan ? `Accept the loan (+${fmtMoney(amount)})` : `Thank you! (+${fmtMoney(amount)})`, detail: "Back to work.", apply: (w) => {
+        w.cash += amount; w.rescuesUsed++; if (loan) w.loanBalance += Math.round(amount * 1.1);
+        w.hud.setStatus(loan ? `Board loan received: +${fmtMoney(amount)}.` : `💰 The board sent ${fmtMoney(amount)}. Keep going!`);
+      } }],
+    });
+  }
+
   private maybeFireEvent() {
     if (this.activeEvent) return;
     const pouring = this.underground.stopes.find((s) => s.status === "pouring");
@@ -820,20 +958,21 @@ export class World {
     else if (this.day >= 24 && !this.firedEvents.has("mill-trip")) this.fireEvent(this.evMillTrip());
   }
   private fireEvent(ev: GameEvent) {
-    this.activeEvent = ev; this.firedEvents.add(ev.id); this.paused = true; this.refreshClock(); this.sound.event();
+    const wasPaused = this.paused;
+    this.activeEvent = ev; this.firedEvents.add(ev.id); this.paused = true; this.eventResume = !wasPaused || this.phase === "operate"; this.refreshClock(); this.sound.event();
     this.hud.showEvent(`<div class="rsHead">⚠ ${ev.title}</div><p class="evBody">${ev.body}</p><div class="evOpts">${ev.options.map((o, i) => `<button class="optBtn" data-act="ev:${i}"><b>${o.label}</b><span>${o.detail}</span></button>`).join("")}</div>`);
   }
   private resolveEvent(i: number) {
     const ev = this.activeEvent; if (!ev) return;
     ev.options[i].apply(this);
-    this.activeEvent = null; this.paused = false; this.hud.hideEvent(); this.updateEconomy(); this.refreshClock();
+    this.activeEvent = null; this.paused = !this.eventResume; this.hud.hideEvent(); this.updateEconomy(); this.refreshClock();
   }
   private evBinderDelay(): GameEvent {
     return {
       id: "binder-delay", title: "Binder rail shipment delayed",
       body: "The rail cement shipment is held up — the silo will run down. Binder is ~70% of your cost, and every pour needs it. Silo capacity vs delivery lead time is the eternal squeeze.",
       options: [
-        { label: `Truck top-up (+${BINDER_TOPUP_TONNES} t, ${fmtMoney(BINDER_TOPUP_COST)})`, detail: "Short lead, premium price — keeps pours running.", apply: (w) => { w.cash -= BINDER_TOPUP_COST; w.supply.topUpBinder(BINDER_TOPUP_TONNES); } },
+        { label: `Truck top-up (+${BINDER_TOPUP_TONNES} t, ${fmtMoney(this.topupCost())})`, detail: "Short lead, premium price. Keeps pours running.", apply: (w) => { w.cash -= w.topupCost(); w.supply.topUpBinder(BINDER_TOPUP_TONNES); } },
         { label: "Accept reduced rail for 8 days", detail: "Delivery cut to 30% — stretch the silo, watch the level.", apply: (w) => { w.tempDeliveryMult = 0.3; w.tempDeliveryUntil = w.day + 8; } },
         { label: "Pause pours 3 days", detail: "Wait for rail — the schedule slips.", apply: (w) => { w.day += 3; } },
       ],
@@ -845,7 +984,7 @@ export class World {
       body: `A production blast on the level above has shaken the fresh fill mid-pour on ${s.id}. Pressure is spiking on the line — a soft, steady pour survives a pulse; a stiff, over-pressured line does not.`,
       options: [
         { label: "Ease flow and ride it out", detail: "Reduce flow, let the pulse pass — a little plug drift.", apply: () => { s.flowFactor = Math.max(0.4, s.flowFactor * 0.6); s.plugDrift = Math.min(1, s.plugDrift + 0.15); } },
-        { label: "Emergency flush the line", detail: "Clear the line now — safe, costs a bit of paste.", apply: (w) => { s.plugDrift = 0; w.cash -= 120_000; } },
+        { label: "Emergency flush the line", detail: "Clear the line now. Safe, costs a bit of paste.", apply: (w) => { s.plugDrift = 0; w.cash -= w.penalty(120_000); } },
         { label: "Stand down the pour", detail: "Stop safely — cold joint, re-pour the placed volume.", apply: (w) => { w.underground.burst(s); w.hud.setStatus(`${s.id} stood down through the seismic event — re-pour needed.`); } },
       ],
     };
@@ -855,7 +994,7 @@ export class World {
       id: "geotech", title: `Geotech flag on ${s.id}`,
       body: `Ground control has flagged the barricade footing on ${s.id}. They want it reinforced before you pour fresh fill against it — ignore the geotech at your peril, a barricade breach is a runaway.`,
       options: [
-        { label: "Reinforce the barricade (+$600k, +1 day)", detail: "Do it right — removes the failure risk.", apply: (w) => { w.cash -= 600_000; w.day += 1; s.barricadeRisk = false; } },
+        { label: `Reinforce the barricade (+${fmtMoney(this.penalty(600_000))}, +1 day)`, detail: "Do it right. Removes the failure risk.", apply: (w) => { w.cash -= w.penalty(600_000); w.day += 1; s.barricadeRisk = false; } },
         { label: "Proceed as designed", detail: "Save time and money — accept the risk of a breach.", apply: () => { s.barricadeRisk = true; } },
         { label: "Delay this stope 2 days", detail: "Wait for a fuller assessment.", apply: (w) => { w.day += 2; } },
       ],
@@ -867,7 +1006,7 @@ export class World {
       body: "The mill has tripped. Tailings feed to the plant is throttled — surge capacity is your buffer against the mill's bad days.",
       options: [
         { label: "Run at reduced flow (5 days)", detail: "Pours proceed but pour rate halved.", apply: (w) => { w.tempPourMult = 0.5; w.tempPourUntil = w.day + 5; } },
-        { label: "Draw down tailings buffer (+$300k)", detail: "Buy stored tailings — keep full rate.", apply: (w) => { w.cash -= 300_000; } },
+        { label: `Draw down tailings buffer (+${fmtMoney(this.penalty(300_000))})`, detail: "Buy stored tailings and keep the full rate.", apply: (w) => { w.cash -= w.penalty(300_000); } },
         { label: "Hold pours 2 days", detail: "Wait for the mill restart.", apply: (w) => { w.day += 2; } },
       ],
     };
@@ -941,7 +1080,7 @@ export class World {
       ? `<div class="labRow"><span class="good">✓ verified</span><small>test-work done — tight UCS scatter, safe to trim binder</small></div>
          ${minl ? `<div class="pNote">Material: <b>${minl.label}</b> — ${minl.note}</div>` : ""}`
       : `<div class="pWarn">⚠ No test-work — the true rheology/UCS curve is unknown. Cylinders scatter widely; over-binder to be safe.</div>
-         <button class="pBtn primary" data-act="testwork"><b>Commission test-work (${fmtMoney(TESTWORK_COST)})</b><span>reveals the real UCS curve &amp; mineralogy; cuts scatter so you can trim binder · +${TESTWORK_DAYS} days</span></button>`;
+         <button class="pBtn primary" data-act="testwork"><b>Commission test-work (${fmtMoney(this.exploreCost(TESTWORK_COST))})</b><span>reveals the real UCS curve &amp; mineralogy; cuts scatter so you can trim binder · +${TESTWORK_DAYS} days</span></button>`;
     return `<div class="labFor">Tuning: <b>${forWho}</b></div>` + `
       <div class="labRow"><span>${yieldStressPa(r.solids).toFixed(0)} Pa</span><small>yield stress</small></div>
       <div class="labRow"><span>${frictionKpaPerM(r.solids).toFixed(1)} kPa/m</span><small>friction gradient</small></div>
@@ -964,11 +1103,12 @@ export class World {
     const passed = stopes.filter((s) => s.status === "cured" && s.ucsPass).length; // cured AND hit strength
     const onTime = stopes.filter((s) => s.status === "cured" && s.cureStartDay <= s.dueDay).length;
     const minedFrac = 1 - this.supply.oreReserve.level / Math.max(1, this.supply.oreReserve.cap); // how much of the (delineated) orebody was monetised
+    const netCash = this.cash - this.loanBalance; // an unpaid board loan counts against you
     let score = 0;
     score += passed === total ? 3 : passed >= total - 1 ? 2 : passed >= total / 2 ? 1 : 0;
     score += onTime >= total ? 2 : onTime >= total * 0.6 ? 1 : 0;
-    score += this.cash > 0 ? 2 : 0;
-    score += this.cash > this.scenario.startCash * 0.3 ? 1 : 0;
+    score += netCash > 0 ? 2 : 0;
+    score += netCash > this.scenario.startCash * 0.3 ? 1 : 0;
     score += minedFrac > 0.8 ? 1 : 0; // reward extracting the resource before the horizon
     const order = ["S", "A", "B", "C", "D"];
     const baseGi = order.indexOf(score >= 8 ? "S" : score >= 6 ? "A" : score >= 4 ? "B" : score >= 2 ? "C" : "D");
@@ -976,17 +1116,25 @@ export class World {
     const steps = this.safetyIncidents >= 4 ? 3 : this.safetyIncidents >= 2 ? 2 : this.safetyIncidents === 1 ? 1 : 0;
     const grade = order[Math.min(order.length - 1, baseGi + steps)];
     this.lastGrade = grade;
+    const cheerLine = grade === "S" || grade === "A" ? "🎉 Brilliant work! The board is thrilled."
+      : grade === "B" ? "👏 Well done! A solid campaign."
+      : grade === "C" ? "👍 You made it through. Try a stronger mix and fill stopes on time for a better grade."
+      : "Every engineer has a tough mine. Try Easy mode, build the Mill early, and add binder in the Lab.";
     // bank legacy points into the persistent company
     const earned = legacyForGrade(grade);
     const co = loadCompany(); co.legacy += earned; saveCompany(co);
     this.hud.showResult(`
       <div class="rsHead">Board review · Day ${Math.floor(this.day)}</div>
       <div class="rsGrade grade-${grade}">${grade}</div>
+      <div class="pNote">${cheerLine}</div>
       <div class="rsRows">
+        <div><span>Difficulty</span><b>${this.diff.label}</b></div>
         <div><span>Cylinders passed</span><b>${passed}/${total}</b></div>
         <div><span>On time</span><b>${onTime}/${total}</b></div>
         <div><span>Orebody extracted</span><b>${Math.round(minedFrac * 100)}%</b></div>
         <div><span>Cash</span><b>${fmtMoney(this.cash)}</b></div>
+        ${this.rescuesUsed > 0 ? `<div><span>Board ${this.diff.rescueIsLoan ? "loans" : "top-ups"}</span><b>${this.rescuesUsed}</b></div>` : ""}
+        ${this.loanBalance > 0 ? `<div><span>Loan still owed</span><b>${fmtMoney(this.loanBalance)}</b></div>` : ""}
         <div><span>Safety</span><b>${this.safetyIncidents ? this.safetyIncidents + " incident" + (this.safetyIncidents > 1 ? "s" : "") : "clean"}</b></div>
         <div><span>Company legacy</span><b>+${earned} → ${co.legacy}</b></div>
       </div>
@@ -996,7 +1144,8 @@ export class World {
   // ---- save / resume ---------------------------------------------------------
   private serialize() {
     return {
-      v: SAVE_VERSION, scenario: this.scenario.id, savedAt: Math.floor(this.day),
+      v: SAVE_VERSION, scenario: this.scenario.id, difficulty: this.diff.id, savedAt: Math.floor(this.day),
+      rescuesUsed: this.rescuesUsed, loanBalance: this.loanBalance, cheered: [...this.cheered],
       day: this.day, speedIdx: this.speedIdx, cash: this.cash, opexPerDay: this.opexPerDay,
       rp: this.rp, research: [...this.research], opexMult: this.opexMult,
       safetyIncidents: this.safetyIncidents, testWorkDone: this.testWorkDone, firedEvents: [...this.firedEvents],
@@ -1037,6 +1186,8 @@ export class World {
     this.day = s.day; this.speedIdx = s.speedIdx ?? 1; this.cash = s.cash; this.opexPerDay = s.opexPerDay;
     this.rp = s.rp || 0; this.research = new Set(s.research || []); this.opexMult = s.opexMult ?? 1;
     this.safetyIncidents = s.safetyIncidents || 0; this.testWorkDone = !!s.testWorkDone; this.firedEvents = new Set(s.firedEvents || []);
+    this.underground.cureFactor = (this.research.has("rapidset") ? 0.75 : 1) * this.diff.cure; // research perk survives a resume
+    this.rescuesUsed = s.rescuesUsed ?? 0; this.loanBalance = s.loanBalance ?? 0; this.cheered = new Set(s.cheered || []);
     this.oreConfidence = s.oreConfidence ?? 0.5; this.explored = !!s.explored;
     this.drillHoles = s.drillHoles ?? 0; for (let i = 1; i <= this.drillHoles; i++) this.spawnDrillHole(i);
     this.millGrind = s.millGrind ?? 1; this.millRecovery = s.millRecovery ?? 1; this.millReagent = s.millReagent ?? 0;
@@ -1058,7 +1209,7 @@ export class World {
     this.refreshClock(); this.refreshSchedule();
     this.hud.setStatus(`Campaign resumed — day ${Math.floor(this.day)}. Press ▶ when ready.`);
     const c = this.underground.counts();
-    console.log(`RESUMED|day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m buildings=${this.buildings.length} tiers=${this.buildings.map((b) => b.tier).join("")} cured=${c.cured} statuses=${this.underground.stopes.map((s) => s.status[0]).join("")} tsf=${Math.round(this.supply.tsf.level / 1000)}k rp=${Math.floor(this.rp)}`);
+    console.log(`RESUMED|diff=${this.diff.id} day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m buildings=${this.buildings.length} tiers=${this.buildings.map((b) => b.tier).join("")} cured=${c.cured} statuses=${this.underground.stopes.map((s) => s.status[0]).join("")} tsf=${Math.round(this.supply.tsf.level / 1000)}k rp=${Math.floor(this.rp)}`);
   }
 
   // ---- pointer --------------------------------------------------------------
@@ -1216,7 +1367,11 @@ export class World {
       if (b.buildProgress >= 1) {
         this.finishBuild(b);
         this.drawRoads(); this.recomputePower(); this.refreshSupply(); this.refreshObjective(); this.checkTutorial(); this.saveGame();
-        const disc = b.spec.supplies && !this.connected(b) ? " ⚠ Too far from the plant — no feed line reaches it." : "";
+        const plantUp = this.buildings.some((x) => x.spec.type === "plant" && x.built);
+        const disc = !b.spec.supplies || this.connected(b) ? ""
+          : !plantUp ? " It will hook up to the Backfill plant once the plant is finished."
+          : !this.isPowered(b) ? " ⚠ It has no power. Build a 🔌 Substation near it (or move it closer to the power station)."
+          : " ⚠ Too far from the plant, so no feed line reaches it. Build it closer to the plant.";
         this.hud.setStatus(`${b.spec.label} complete — now operational.` + disc + (b.spec.type === "power" ? " It powers everything nearby." : ""));
         this.sound.build();
       }
@@ -1288,8 +1443,9 @@ export class World {
   private ucsRealised(s: StopeUG): number {
     let v = ucsVariance(s.depthM + s.dueDay);
     const minl = this.scenario.mineralogy;
-    if (!this.testWorkDone) v = 1 + (v - 1) * 2.5 - (minl?.varianceAdd ?? 0); // untested → wide, risky scatter
-    const latePen = (minl?.latePenalty ?? 0) * (this.testWorkDone ? 0.4 : 1);
+    const sc = this.diff.scatter; // Easy/Normal soften the price of skipping test-work
+    if (!this.testWorkDone) v = 1 + (v - 1) * (1 + 1.5 * sc) - (minl?.varianceAdd ?? 0) * sc; // untested → wide, risky scatter
+    const latePen = (minl?.latePenalty ?? 0) * (this.testWorkDone ? 0.4 : 1) * sc;
     const crewPen = (1 - this.crewCompetency()) * 0.08; // green/thin crews mix and QC less consistently
     return Math.max(0.4, v * (1 - latePen - crewPen));
   }
@@ -1308,14 +1464,17 @@ export class World {
     this.refreshObjective(); // exploration is objective step 1 — advance once delineated
   }
   /** Cost of the mining permit — dearer if a reactive orebody has no containment. */
-  private permitCost() { return PERMIT_BASE + (this.scenario.mineralogy?.reactive && !this.hasControlledSlurry() ? PERMIT_ENV_SURCHARGE : 0); }
+  private permitCost() {
+    const containment = this.buildings.some((b) => b.spec.type === "controlled"); // a pond under construction counts (it can only finish once operating)
+    return Math.round((PERMIT_BASE + (this.scenario.mineralogy?.reactive && !containment ? PERMIT_ENV_SURCHARGE : 0)) * this.diff.permit);
+  }
   /** Leave the untimed Set-up phase and start the operating clock (needs the permit). */
   private startOperations() {
     if (!this.permitObtained) {
       const fee = this.permitCost();
       if (this.cash < fee) { this.hud.setStatus(`Operations need a mining permit (${fmtMoney(fee)}) — not enough cash yet.`); return; }
       this.cash -= fee; this.permitObtained = true; this.updateEconomy();
-      const surch = fee > PERMIT_BASE ? " (incl. an environmental surcharge — no PAG containment)" : "";
+      const surch = fee > PERMIT_BASE * this.diff.permit + 1 ? " (incl. an environmental surcharge: no PAG containment)" : "";
       this.hud.setStatus(`Mining permit granted (−${fmtMoney(fee)})${surch}.`);
     }
     this.phase = "operate"; this.paused = false; this.hud.setPhase("▶ Operating");
@@ -1331,7 +1490,7 @@ export class World {
   /** Capex to develop access to a stope early (base + per day brought forward). */
   private developCost(s: StopeUG): number {
     const daysEarly = Math.max(0, Math.ceil(s.availableDay - this.day));
-    return DEV_BASE + DEV_PER_DAY * daysEarly;
+    return this.capex(DEV_BASE + DEV_PER_DAY * daysEarly);
   }
   /** How long an access drive takes — deeper levels take longer to reach. */
   private devDays(s: StopeUG): number { return 2 + s.levelIdx; }
@@ -1345,19 +1504,19 @@ export class World {
     return chosen === this.scenario.mineralogy?.reagent ? 1.12 : 0.88;
   }
   private millThroughputMult() { return [1.12, 1.0, 0.9][this.millGrind]; }     // coarse grinds faster
-  private millPasteFrac() { return [0.45, 0.6, 0.75][this.millGrind]; }         // finer grind → more paste-suitable tailings
+  private millPasteFrac() { return Math.min(0.9, [0.45, 0.6, 0.75][this.millGrind] * this.diff.pasteFeed); }         // finer grind → more paste-suitable tailings
   private flowsheetOpexPerDay() { return this.millRecovery * 9_000 + this.millGrind * 6_000; }
 
   /** Barricade capacity (kPa it can hold) from its type + optional relief. */
   private barricadeCap(s: StopeUG): number {
     if (!s.barricadeType) return 0;
-    return BARRICADE[s.barricadeType].capKpa + (s.barricadeRelief ? BARRICADE.reliefBonusKpa : 0);
+    return (BARRICADE[s.barricadeType].capKpa + (s.barricadeRelief ? BARRICADE.reliefBonusKpa : 0)) * this.diff.barricadeCap;
   }
   /** Up-front cost of the designed barricade (type + relief + exclusion + instrumentation). */
   private barricadeCost(s: StopeUG): number {
     if (!s.barricadeType) return 0;
-    return BARRICADE[s.barricadeType].cost + (s.barricadeRelief ? BARRICADE.reliefCost : 0)
-      + (s.exclusionZone ? BARRICADE.exclusionCost : 0) + (s.barricadeInstr ? BARRICADE.instrCost : 0);
+    return this.capex(BARRICADE[s.barricadeType].cost + (s.barricadeRelief ? BARRICADE.reliefCost : 0)
+      + (s.exclusionZone ? BARRICADE.exclusionCost : 0) + (s.barricadeInstr ? BARRICADE.instrCost : 0));
   }
 
   /** Cut a flat gravel bench into the sloping terrain under an off-pad structure. */
@@ -1417,7 +1576,9 @@ export class World {
    *  a plant sited far from the shaft forces stronger pipe (or pumps) on every leg.
    *  Site it near the collar to preserve the gravity head (course Module 03/11). */
   plantSurfaceRunM(): number {
-    const plant = this.buildings.find((b) => b.spec.type === "plant" && b.built);
+    // a plant still under construction counts: its site is fixed, and pipes designed before it
+    // finished used to go invalid (and un-buildable) the moment it came online
+    const plant = this.buildings.find((b) => b.spec.type === "plant");
     return plant ? Vector3.Distance(plant.pos, this.portal) * SURFACE_UNIT_M : 0;
   }
   private recomputePlantHead() { this.underground.net.setSurfaceHead(frictionMpa(this.plantSurfaceRunM())); }
@@ -1455,6 +1616,7 @@ export class World {
   }
 
   private updateEconomy() {
+    this.maybeRescue();
     this.hud.setEconomy(this.cash, this.powered, this.total);
     this.hud.setBinder(this.supply.binder.level, this.supply.binder.cap);
     this.hud.setResources({ reserve: this.supply.oreReserve, ore: this.supply.ore, tailings: this.supply.tailings, water: this.supply.water, tsf: this.supply.tsf, income: this.millDayIncome, reuse: this.lastWaterReused });
@@ -1544,7 +1706,7 @@ export class World {
     const disconnected = this.buildings.filter((b) => b.spec.supplies && this.isPowered(b) && !this.connected(b));
     if (disconnected.length) return `<span class="objStep">Connect</span>${disconnected.length} supply work(s) can't reach the plant (red line) — resite them within feed-line range.`;
     if (this.scenario.mineralogy?.reactive && !this.hasControlledSlurry()) return `<span class="objStep">Environment</span>This ore's reject is <b>reactive (PAG)</b> — build a <b>☣ Controlled slurry pond</b> to contain it, or face ongoing environmental fines.`;
-    if (!this.permitObtained) return `<span class="objStep">Ready</span>Set up. Press <b>▶</b> to obtain the <b>mining permit</b> (${fmtMoney(this.permitCost())}${this.permitCost() > PERMIT_BASE ? ", incl. environmental surcharge — build a ☣ Controlled slurry pond to cut it" : ""}) and begin operations.`;
+    if (!this.permitObtained) return `<span class="objStep">Ready</span>Set up. Press <b>▶</b> to obtain the <b>mining permit</b> (${fmtMoney(this.permitCost())}${this.permitCost() > PERMIT_BASE * this.diff.permit + 1 ? ", incl. environmental surcharge: build a ☣ Controlled slurry pond to cut it" : ""}) and begin operations.`;
     return `<span class="objStep">Ready</span>Operating. <b>⛏ Go underground</b> to reticulate and pour; fill stopes before their due dates.`;
   }
   private refreshObjective() {
@@ -1730,7 +1892,7 @@ export class World {
       const cap = this.tsfCapOf(b);
       const fillPct = this.supply.tsf.cap > 0 ? Math.round((this.supply.tsf.level / this.supply.tsf.cap) * 100) : 0;
       const lift = Math.round(s.tsfCap * 0.5);
-      const cost = tsfRaiseCost(b.raises);
+      const cost = this.capex(tsfRaiseCost(b.raises));
       roles.push(`Stores the ~half of tailings that can't go back underground`);
       extra = `<div class="pSplit"><span>This dam holds</span><b>${cap.toLocaleString()} t · ${b.raises}/${TSF_MAX_RAISES} lifts</b></div>
         <div class="pSplit"><span>TSF fill (site)</span><b class="${fillPct > 85 ? "bad" : ""}">${fillPct}%</b></div>
@@ -1764,7 +1926,7 @@ export class World {
       `<button class="fillBtn ${on ? "on" : ""}" data-act="${kind}:${i}" style="flex:1 1 100%;text-align:left">${label}<br><small>${sub}</small></button>`;
     el.innerHTML = `<div class="introCard">
       <div class="rsHead">⚙ Concentrator flowsheet</div>
-      <div class="pNote">The mill is a design surface. Comminution sets how fine you grind — finer means more of the tailings suit paste, but slower throughput and more power. Concentration sets metal recovery — the concentrate revenue per tonne. Switching a route costs ${fmtMoney(FLOWSHEET_SWITCH_COST)}.</div>
+      <div class="pNote">The mill is a design surface. Comminution sets how fine you grind: finer means more of the tailings suit paste, but slower throughput and more power. Concentration sets metal recovery, the concentrate revenue per tonne. Switching a route costs ${fmtMoney(this.capex(FLOWSHEET_SWITCH_COST))}.</div>
       <div class="pSplit"><span>Grind → paste-feed</span><b>${Math.round(this.millPasteFrac() * 100)}% · throughput ${Math.round(this.millThroughputMult() * 100)}%</b></div>
       <div class="fillPick" style="flex-wrap:wrap">${grinds.map((g, i) => opt("grind", i, g, `${[45, 60, 75][i]}% paste feed · ${[112, 100, 90][i]}% throughput`, this.millGrind === i)).join("")}</div>
       <div class="pSplit"><span>Recovery → income</span><b>${Math.round(this.millRecoveryMult() * 100)}%</b></div>
@@ -1783,11 +1945,12 @@ export class World {
     const [kind, vStr] = act.split(":"); const v = +vStr;
     const cur = kind === "grind" ? this.millGrind : kind === "recov" ? this.millRecovery : this.millReagent;
     if (v === cur) return;
-    if (this.cash < FLOWSHEET_SWITCH_COST) { this.hud.setStatus(`Not enough cash to reconfigure the flowsheet (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`); return; }
-    this.cash -= FLOWSHEET_SWITCH_COST;
+    const fsCost = this.capex(FLOWSHEET_SWITCH_COST);
+    if (this.cash < fsCost) { this.hud.setStatus(`Not enough cash to reconfigure the flowsheet (${fmtMoney(fsCost)}).`); return; }
+    this.cash -= fsCost;
     if (kind === "grind") this.millGrind = v; else if (kind === "recov") this.millRecovery = v; else this.millReagent = v;
     this.updateEconomy(); this.saveGame();
-    this.hud.setStatus(`Flowsheet reconfigured — ${kind === "grind" ? "grind" : kind === "recov" ? "recovery route" : "reagent suite"} changed (${fmtMoney(FLOWSHEET_SWITCH_COST)}).`);
+    this.hud.setStatus(`Flowsheet reconfigured: ${kind === "grind" ? "grind" : kind === "recov" ? "recovery route" : "reagent suite"} changed (${fmtMoney(fsCost)}).`);
   }
 
   /** Pay to raise the selected TSF's embankment — adds storage, and the dam visibly grows taller. */
@@ -1809,7 +1972,7 @@ export class World {
   /** Raise a specific TSF's embankment a lift (used by the panel button and the auto-player). */
   private raiseDamOn(b: Placed, fromPanel: boolean): boolean {
     if (!b.spec.tsfCap || b.raises >= TSF_MAX_RAISES) return false;
-    const cost = tsfRaiseCost(b.raises);
+    const cost = this.capex(tsfRaiseCost(b.raises));
     if (this.cash < cost) { if (fromPanel) this.hud.setStatus(`Not enough cash to raise the dam (${fmtMoney(cost)}).`); return false; }
     this.cash -= cost; this.sound.damRaise();
     b.raises++;
@@ -1935,14 +2098,15 @@ export class World {
         ${drill}
         ${this.hglChart(idx)}
         <div class="segList">${rows}</div>
-        <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : aggBlock ? "PAF needs a Crusher plant on the surface" : "set a valid class on every leg"}</span></button>`;
+        ${this.diff.autoDesign ? `<button class="pBtn" data-act="autodesign"><b>✨ Auto-design the pipes</b><span>pick safe pipe for every leg for me</span></button>` : ""}
+        <button class="pBtn primary" data-act="build" ${canBuild ? "" : "disabled"}><b>Build reticulation</b><span>${canBuild ? fmtMoney(planned) : aggBlock ? "PAF needs a Crusher plant on the surface" : this.diff.autoDesign ? "set a pipe on every leg (tap a leg's class, or ✨ Auto-design)" : "set a valid class on every leg"}</span></button>`;
     } else if (st.status === "piped") {
       const rev = fillRevenue(st.volumeM3);
       const chk = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="sign:${key}">${on ? "☑" : "☐"} ${label}</button>`;
       const bt = st.barricadeType;
       const cap = this.barricadeCap(st);
       const barCost = this.barricadeCost(st);
-      const barBtn = (key: "mullock" | "shotcrete") => { const spec = BARRICADE[key]; return `<button class="fillBtn ${bt === key ? "on" : ""}" data-act="bar:${key}" title="${spec.note.replace(/"/g, "&quot;")}">${spec.short}<br><small>${spec.capKpa} kPa</small></button>`; };
+      const barBtn = (key: "mullock" | "shotcrete") => { const spec = BARRICADE[key]; return `<button class="fillBtn ${bt === key ? "on" : ""}" data-act="bar:${key}" title="${spec.note.replace(/"/g, "&quot;")}">${spec.short}<br><small>${Math.round(spec.capKpa * this.diff.barricadeCap)} kPa</small></button>`; };
       const tog = (key: string, on: boolean, label: string) => `<button class="chkBtn ${on ? "on" : ""}" data-act="bartog:${key}">${on ? "☑" : "☐"} ${label}</button>`;
       const plantReady = !ft.reticulated || this.plantThroughput > 0;
       const ready = !!bt && !!st.signPourNote && plantReady;
@@ -1952,11 +2116,11 @@ export class World {
         ${ft.reticulated ? this.hglChart(idx) : ""}
         <div class="pNote">Design the barricade — it holds the fluid paste until the plug cures. Rate of rise loads it during the pour; overpressure = <b>inrush</b>.</div>
         <div class="fillPick">${barBtn("mullock")}${barBtn("shotcrete")}</div>
-        ${bt ? `<div class="pSplit"><span>Capacity</span><b>${cap} kPa</b></div>` : `<div class="pNote pWarnNote">⚠ Pick a barricade type before pouring.</div>`}
+        ${bt ? `<div class="pSplit"><span>Capacity</span><b>${Math.round(cap)} kPa</b></div>` : `<div class="pNote pWarnNote">⚠ Pick a barricade type before pouring.</div>`}
         <div class="chkList">
-          ${tog("relief", !!st.barricadeRelief, `Pressure relief / breather (+${fmtMoney(BARRICADE.reliefCost)} · +${BARRICADE.reliefBonusKpa} kPa)`)}
-          ${tog("excl", !!st.exclusionZone, `Exclusion zone (+${fmtMoney(BARRICADE.exclusionCost)} · contains a failure)`)}
-          ${tog("instr", !!st.barricadeInstr, `Barricade instrumentation (+${fmtMoney(BARRICADE.instrCost)} · live gauge)`)}
+          ${tog("relief", !!st.barricadeRelief, `Pressure relief / breather (+${fmtMoney(this.capex(BARRICADE.reliefCost))} · +${Math.round(BARRICADE.reliefBonusKpa * this.diff.barricadeCap)} kPa)`)}
+          ${tog("excl", !!st.exclusionZone, `Exclusion zone (+${fmtMoney(this.capex(BARRICADE.exclusionCost))} · contains a failure)`)}
+          ${tog("instr", !!st.barricadeInstr, `Barricade instrumentation (+${fmtMoney(this.capex(BARRICADE.instrCost))} · live gauge)`)}
         </div>
         <div class="pNote">Pre-pour sign-off:</div>
         <div class="chkList">
@@ -2038,8 +2202,9 @@ export class World {
     if (act === "flowsheet") { this.showFlowsheet(); return; }
     if (act === "testwork") {
       if (this.testWorkDone) return;
-      if (this.cash < TESTWORK_COST) { this.hud.setStatus(`Not enough cash for a test-work campaign (${fmtMoney(TESTWORK_COST)}).`); return; }
-      this.cash -= TESTWORK_COST; this.testWorkDone = true; this.day += TESTWORK_DAYS;
+      const twCost = this.exploreCost(TESTWORK_COST);
+      if (this.cash < twCost) { this.hud.setStatus(`Not enough cash for a test-work campaign (${fmtMoney(twCost)}).`); return; }
+      this.cash -= twCost; this.testWorkDone = true; this.day += TESTWORK_DAYS;
       this.updateEconomy(); this.hud.setLabReadout(this.labReadout()); this.saveGame();
       const minl = this.scenario.mineralogy;
       this.hud.setStatus(`Test-work complete — design basis verified${minl ? ` (${minl.label})` : ""}. UCS scatter tightens; trim binder with confidence.`);
@@ -2051,9 +2216,10 @@ export class World {
     if (!st) return;
     if (act === "remediate") {
       if (st.ucsPass !== false) return;
-      if (this.cash < 2_000_000) { this.hud.setStatus(`Not enough cash to remediate ${st.id} (${fmtMoney(2_000_000)}).`); return; }
-      this.cash -= 2_000_000; this.underground.remediate(st); this.updateEconomy(); this.renderStopePanel();
-      this.hud.setStatus(`${st.id} remediation ordered (${fmtMoney(2_000_000)}) — re-pour required.`);
+      const remCost = this.capex(2_000_000);
+      if (this.cash < remCost) { this.hud.setStatus(`Not enough cash to remediate ${st.id} (${fmtMoney(remCost)}).`); return; }
+      this.cash -= remCost; this.underground.remediate(st); this.updateEconomy(); this.renderStopePanel();
+      this.hud.setStatus(`${st.id} remediation ordered (${fmtMoney(remCost)}). Re-pour it with a stronger mix (more binder in the 🧪 Lab).`);
       return;
     }
     if (act === "develop") {
@@ -2091,6 +2257,12 @@ export class World {
       else if (k === "excl") st.exclusionZone = !st.exclusionZone;
       else if (k === "instr") st.barricadeInstr = !st.barricadeInstr;
       this.renderStopePanel(); return;
+    }
+    if (act === "autodesign") {
+      if (st.status !== "available") return;
+      const ok = this.autoDesignPath(this.underground.stopes.indexOf(st)); this.renderStopePanel();
+      this.hud.setStatus(ok ? `✨ Pipes designed for ${st.id}. Every leg is safe (✓). Press Build reticulation.` : `${st.id} is too deep for these pipes even with chokes. Try a dedicated drilled borehole.`);
+      return;
     }
     if (act.startsWith("seg:")) { this.underground.net.cycleClass(act.slice(4)); this.renderStopePanel(); return; }
     if (act.startsWith("choke:")) { this.underground.net.toggleChoke(act.slice(6)); this.renderStopePanel(); return; }
@@ -2172,7 +2344,7 @@ export class World {
     }
     this.saveGame();
     const c = this.underground.counts();
-    console.log(`SEEDED|day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m buildings=${this.buildings.length} tiers=${this.buildings.map((b) => b.tier).join("")} cured=${c.cured} statuses=${this.underground.stopes.map((s) => s.status[0]).join("")} tsf=${Math.round(this.supply.tsf.level / 1000)}k rp=${Math.floor(this.rp)}`);
+    console.log(`SEEDED|diff=${this.diff.id} day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m buildings=${this.buildings.length} tiers=${this.buildings.map((b) => b.tier).join("")} cured=${c.cured} statuses=${this.underground.stopes.map((s) => s.status[0]).join("")} tsf=${Math.round(this.supply.tsf.level / 1000)}k rp=${Math.floor(this.rp)}`);
   }
   debugBuildPlantLine() {
     this.plantInterior.debugBuildLine();                 // places + wires the line, solves, reports capacity
@@ -2252,5 +2424,85 @@ export class World {
       L(`END day=${Math.floor(this.day)} cash=${(this.cash / 1e6).toFixed(1)}m cured=${c.cured}/${this.underground.stopes.length} safety=${this.safetyIncidents} orebody=${mined}% rp=${Math.floor(this.rp)} GRADE=${this.lastGrade}`);
       L("DONE");
     } catch (e) { L("ERROR " + ((e as Error)?.message ?? e)); }
+  }
+
+  /** Headless HONEST self-play: pays for everything a real player pays for (exploration,
+   *  every building, the plant process line, the permit, pipes and barricades), and the
+   *  clock runs through construction. "smart" plays well; "naive" is a new player who
+   *  builds in a sensible order but skips test-work, keeps the default mix, uses cheap
+   *  barricades, pours everything at once, answers events with the cheap/risky option and
+   *  only raises the dam when it is full (learning from a burst/inrush on the re-pour).
+   *  #playsmart / #playnaive trigger it (append easy|normal|hard and a mine digit 1-4). */
+  debugPlayRun(style: "smart" | "naive") {
+    const smart = style === "smart";
+    const m = (n: number) => (n / 1e6).toFixed(1) + "m";
+    const L = (s: string) => console.log(`PLAYRUN|${style}|${this.diff.id}|${this.scenario.id}|` + s);
+    let minCash = this.cash;
+    const track = () => { minCash = Math.min(minCash, this.cash); };
+    const answer = () => { for (let k = 0; k < 5 && this.activeEvent; k++) { const n = this.activeEvent.options.length; this.resolveEvent(smart ? 0 : Math.min(1, n - 1)); track(); } };
+    const repoured = new Set<string>();
+    let msgs = 0; const hudStatus = this.hud.setStatus.bind(this.hud);
+    this.hud.setStatus = (t: string) => { if (/⚠|🦺|🎉|💰|☣/.test(t) && !/pour slowed/.test(t) && msgs++ < 30) L(`MSG d${Math.floor(this.day)} ${t}`); hudStatus(t); };
+    try {
+      this.runSurvey(); answer(); track();
+      for (let g = 0; g < 8 && this.oreConfidence < 0.7; g++) { this.drillCampaign(); answer(); track(); }
+      const plan: [string, number, number][] = [["power", 0, 0], ["plant", 24, 0], ["mill", 72, 36], ["tsf", 66, -46], ["rail", -44, 36]];
+      if (!this.scenario.wet) plan.push(["waterpump", 30, 60]);
+      if (this.scenario.mineralogy?.reactive) plan.push(["controlled", -40, -62]); // the objective banner asks for it
+      for (const [t, x, z] of plan) {
+        const spec = specOf(t); answer();
+        if (this.cash < spec.cost) { L(`SKIP ${t} (cost ${m(spec.cost)}, cash ${m(this.cash)})`); continue; }
+        this.place(spec, new Vector3(x, heightAt(x, z), z)); this.disarm(); track(); answer();
+      }
+      const lineCost = ["thickener_hr", "cyclone", "filter_vac", "mixer_twin", "pump_cent"].reduce((a, t) => a + PLANT_EQUIP[t].cost * 100, 0);
+      answer();
+      if (this.cash >= lineCost) { this.cash -= lineCost; this.debugBuildPlantLine(); this.updateEconomy(); track(); answer(); }
+      else L(`SKIP plant line (cost ${m(lineCost)}, cash ${m(this.cash)})`);
+      if (smart) { this.applyPanelAction("testwork"); this.debugSetRecipe(0.73, 320); track(); answer(); }
+      L(`setup done day=${Math.floor(this.day)} cash=${m(this.cash)} rescues=${this.rescuesUsed}`);
+      this.startOperations(); track(); answer();
+      if (this.phase !== "operate") { L(`STUCK cannot start operations (permit ${m(this.permitCost())}, cash ${m(this.cash)}) GRADE=none`); L("DONE"); return; }
+      this.descend();
+      const net = this.underground.net;
+      let guard = 0;
+      while (!this.ended && guard++ < 700) {
+        answer();
+        this.underground.stopes.forEach((s, i) => {
+          if (s.status !== "available") return;
+          const legs = net.pathFor(i).filter((g) => !g.built);
+          if (smart) {
+            for (const g of legs) if (g.kind === "borehole" && s.levelIdx >= 1) g.choke = true;
+            let need = 0;
+            for (const g of legs) { let c = 3; for (let k = 0; k < 4; k++) { g.classId = k; if (net.valid(g)) { c = k; break; } } need = Math.max(need, c); }
+            for (const g of legs) g.classId = Math.min(3, need + 1);
+          } else {
+            for (const g of legs) { g.classId = 0; while (g.classId < 3 && !net.valid(g)) g.classId++; }
+            if (!net.pathCanBuild(i) && this.diff.autoDesign) this.autoDesignPath(i); // stuck: press the ✨ button
+          }
+          if (!net.pathCanBuild(i) || this.cash < net.pathPlannedCost(i)) return;
+          const res = this.underground.commitReticulation(i);
+          if (res) { this.cash -= res.cost; track(); }
+        });
+        const pour = (s: StopeUG) => {
+          if (FILL_TYPES[s.fillType].reticulated && this.plantThroughput <= 0) return;
+          const careful = smart || repoured.has(s.id); // naive players learn after the first failure
+          s.barricadeType = careful ? "shotcrete" : "mullock"; s.barricadeRelief = careful;
+          s.signBarricade = true; s.signPourNote = true; s.signLowStart = careful;
+          const bc = this.barricadeCost(s); if (this.cash < bc) return;
+          this.cash -= bc; track(); repoured.add(s.id);
+          this.underground.startPour(s); if (!s.signLowStart) s.plugDrift = 0.25;
+        };
+        if (smart) {
+          if (!this.underground.stopes.some((s) => s.status === "pouring")) { const next = this.underground.stopes.find((s) => s.status === "piped"); if (next) pour(next); }
+        } else this.underground.stopes.filter((s) => s.status === "piped").forEach(pour);
+        const tsfFull = this.supply.tsf.cap > 0 && this.supply.tsf.level > this.supply.tsf.cap * (smart ? 0.88 : 0.98);
+        if (tsfFull) { const tsf = this.buildings.find((b) => b.spec.tsfCap && b.raises < TSF_MAX_RAISES); if (tsf) { this.raiseDamOn(tsf, false); track(); } }
+        this.debugAdvance(1); track(); answer();
+        if (guard % 4 === 0) L(`day ${Math.floor(this.day)} st=${this.underground.stopes.map((s) => s.status[0] + (s.status === "pouring" ? Math.round(s.placedM3 / s.volumeM3 * 100) : "")).join("")} thr=${Math.round(this.plantThroughput)} bind=${Math.round(this.supply.binder.level)} tail=${Math.round(this.supply.tailings.level)} cash=${m(this.cash)} cured=${this.underground.counts().cured} safety=${this.safetyIncidents} rescues=${this.rescuesUsed} loan=${m(this.loanBalance)}`);
+      }
+      const passed = this.underground.stopes.filter((s) => s.status === "cured" && s.ucsPass).length;
+      L(`END day=${Math.floor(this.day)} cash=${m(this.cash)} minCash=${m(minCash)} cured=${this.underground.counts().cured}/6 passed=${passed} safety=${this.safetyIncidents} rescues=${this.rescuesUsed} loan=${m(this.loanBalance)} GRADE=${this.lastGrade}`);
+      L("DONE");
+    } catch (e) { L("ERROR " + ((e as Error)?.stack ?? e)); }
   }
 }

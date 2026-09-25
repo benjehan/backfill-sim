@@ -153,8 +153,10 @@ export class Reticulation {
   cost(seg: Segment): number {
     const c = this.cls(seg); if (!c) return 0;
     const drill = seg.id.startsWith("DB") && !seg.id.startsWith("DBr") ? DRILL_CAPEX : 0; // sinking the hole itself
-    return Math.round(c.costPerM * seg.lengthM) + (seg.choke ? CHOKE_CAPEX : 0) + (seg.booster ? BOOST_CAPEX : 0) + drill;
+    return Math.round(c.costPerM * seg.lengthM) + Math.round(((seg.choke ? CHOKE_CAPEX : 0) + (seg.booster ? BOOST_CAPEX : 0) + drill) * this.capexScale);
   }
+  /** Difficulty scaling for the fixed station capex (chokes, boosters, drilled holes); pipe $/m is scaled in PIPE_CLASSES. */
+  capexScale = 1;
 
   // ---- editing (free while planning; locked once built) ----------------------
   cycleClass(id: string) {

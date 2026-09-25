@@ -49,7 +49,7 @@ export const SCENARIOS: Scenario[] = [
     id: "deepstar-deeps",
     name: "Deepstar Deeps",
     blurb: "A deep, arid gold mine — huge static head, tight budget, ruthless schedule. Master the boreholes.",
-    difficulty: "Hard",
+    difficulty: "Deep",
     startCash: 120_000_000,
     horizonDays: 52,
     orebody: 300_000,
