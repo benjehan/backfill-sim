@@ -192,6 +192,7 @@ export class Environment {
     this.setSky({ zenith: "#3f86d6", horizon: "#cfe3ef", sun: 1 });
 
     this.buildClouds();
+    this.buildBirds();
     this.buildScenery(casters);
     scene.onBeforeRenderObservable.add(() => this.tick(scene.getEngine().getDeltaTime() / 1000));
   }
@@ -231,6 +232,21 @@ export class Environment {
       cl.scaling.setAll(0.8 + r() * 0.8);
       cl.parent = this.root;
       this.clouds.push(cl);
+    }
+  }
+
+  private birds: { root: TransformNode; wl: Mesh; wr: Mesh; a: number; r: number; y: number; sp: number; ph: number; cx: number; cz: number }[] = [];
+  private buildBirds() {
+    const r = rng(4242);
+    const mat = new StandardMaterial("birdM", this.scene);
+    mat.diffuseColor = Color3.FromHexString("#2b2f36"); mat.specularColor = Color3.Black();
+    const flocks = [{ cx: 40, cz: -90 }, { cx: -120, cz: 80 }];
+    for (const f of flocks) for (let i = 0; i < 7; i++) {
+      const root = new TransformNode("bird", this.scene); root.parent = this.root;
+      const body = MeshBuilder.CreateBox("bb", { width: 0.35, height: 0.3, depth: 1.1 }, this.scene); body.material = mat; body.parent = root; body.isPickable = false;
+      const wl = MeshBuilder.CreateBox("bwl", { width: 1.6, height: 0.08, depth: 0.55 }, this.scene); wl.material = mat; wl.parent = root; wl.setPivotPoint(new Vector3(-0.8, 0, 0)); wl.position.x = 0.8; wl.isPickable = false;
+      const wr = MeshBuilder.CreateBox("bwr", { width: 1.6, height: 0.08, depth: 0.55 }, this.scene); wr.material = mat; wr.parent = root; wr.setPivotPoint(new Vector3(0.8, 0, 0)); wr.position.x = -0.8; wr.isPickable = false;
+      this.birds.push({ root, wl, wr, a: r() * Math.PI * 2, r: 30 + r() * 25, y: 38 + r() * 18, sp: 0.18 + r() * 0.08, ph: r() * 6, cx: f.cx, cz: f.cz });
     }
   }
 
@@ -351,6 +367,14 @@ export class Environment {
     for (const c of this.clouds) {
       c.position.x += dt * 2.2;
       if (c.position.x > 620) c.position.x = -620;
+    }
+    for (const b of this.birds) {
+      b.a += dt * b.sp;
+      const x = b.cx + Math.cos(b.a) * b.r, z = b.cz + Math.sin(b.a) * b.r;
+      b.root.position.set(x, b.y + Math.sin(this.t * 0.7 + b.ph) * 2, z);
+      b.root.rotation.y = -b.a; // tangent to the circle
+      const flap = Math.sin(this.t * 9 + b.ph) * 0.55;
+      b.wl.rotation.z = flap; b.wr.rotation.z = -flap;
     }
     if (this.waterBump) { this.waterBump.uOffset = this.t * 0.02; this.waterBump.vOffset = this.t * 0.013; }
   }

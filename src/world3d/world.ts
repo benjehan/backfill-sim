@@ -285,6 +285,7 @@ export class World {
     this.refreshSchedule();
     if (!this.tutorial) this.maybeShowIntro(); // the tutorial replaces the intro card
 
+    this.flyIn();
     this.scene.onPointerObservable.add((pi) => this.onPointer(pi));
     this.engine.runRenderLoop(() => {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.1);
@@ -508,6 +509,23 @@ export class World {
   }
 
   private env!: Environment;
+  /** Cinematic opening: sweep in from high over the valley to the working view. */
+  private flyIn() {
+    if (location.hash) return; // headless test hooks want a static camera
+    const cam = this.camera, T = 3.2;
+    const from = { a: SURF_VIEW.alpha - 1.1, b: 0.72, r: 330 };
+    let t = 0;
+    const ease = (k: number) => 1 - Math.pow(1 - k, 3);
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      if (this.mode !== "surface") { this.scene.onBeforeRenderObservable.remove(obs); return; } // left the surface: stop steering
+      t += this.engine.getDeltaTime() / 1000; const k = ease(Math.min(1, t / T));
+      cam.alpha = from.a + (SURF_VIEW.alpha - from.a) * k;
+      cam.beta = from.b + (SURF_VIEW.beta - from.b) * k;
+      cam.radius = from.r + (SURF_VIEW.radius - from.r) * k;
+      if (k >= 1) this.scene.onBeforeRenderObservable.remove(obs);
+    });
+    this.canvas.addEventListener("pointerdown", () => { t = T; }, { once: true }); // any click skips it
+  }
   /** Watch the frame rate for a few seconds; if it is poor, drop SSAO so it stays smooth. */
   private autoQuality() {
     if (!gfxHigh()) return;
