@@ -140,11 +140,11 @@ export class Underground {
 
   private build() {
     const rock = mat(this.scene, "#20262e");
-    const drive = mat(this.scene, "#4a5058");
+    const drive = mat(this.scene, "#7c7f84"); // shotcreted drives
     const steel = mat(this.scene, "#8a939c");
 
-    const back = MeshBuilder.CreateBox("rockback", { width: 96, height: 74, depth: 2 }, this.scene);
-    back.material = rock; back.position.set(32, -28, -14); back.parent = this.root;
+    void rock;
+    this.buildCutaway();
 
     const shaft = MeshBuilder.CreateBox("shaft", { width: 7, height: 64, depth: 7 }, this.scene);
     shaft.material = mat(this.scene, "#2a2f36"); shaft.position.set(0, -28, 0); shaft.parent = this.root;
@@ -198,6 +198,63 @@ export class Underground {
       s.availableDay = sc.schedule[i].a; s.dueDay = sc.schedule[i].d;
       s.grade = +(0.75 + fract((i + 1) * 127.1) * 0.5).toFixed(2); // rich/lean zones, orebody avg ~1.0
     });
+  }
+
+  /** The earth as a diorama cutaway: strata back + side walls, a grassy lip with
+   *  trees on top, embedded boulders, glinting ore and lit drives. Decoration only. */
+  private buildCutaway() {
+    const X0 = -16, X1 = 82, Z0 = -14, Z1 = 26, TOP = 2, BOT = -68;
+    const r = (() => { let s = 99; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; })();
+    const bands: [number, string][] = [[3, "#5c4331"], [7, "#76513a"], [11, "#8a7657"], [13, "#5b5b61"], [15, "#474b53"], [99, "#353941"]];
+    const W = X1 - X0, D = Z1 - Z0;
+    let y = TOP;
+    for (const [h0, hex] of bands) {
+      const h = Math.min(h0, y - BOT); if (h <= 0) break;
+      const cy = y - h / 2; const m = mat(this.scene, hex);
+      const back = MeshBuilder.CreateBox("strataB", { width: W, height: h, depth: 3 }, this.scene); back.material = m; back.position.set((X0 + X1) / 2, cy, Z0 - 1.5);
+      const left = MeshBuilder.CreateBox("strataL", { width: 3, height: h, depth: D }, this.scene); left.material = m; left.position.set(X0 - 1.5, cy, (Z0 + Z1) / 2);
+      const right = MeshBuilder.CreateBox("strataR", { width: 3, height: h, depth: D }, this.scene); right.material = m; right.position.set(X1 + 1.5, cy, (Z0 + Z1) / 2);
+      for (const b of [back, left, right]) { b.parent = this.root; b.receiveShadows = true; b.isPickable = false; }
+      y -= h;
+    }
+    const floor = MeshBuilder.CreateBox("strataF", { width: W + 6, height: 3, depth: D + 3 }, this.scene);
+    floor.material = mat(this.scene, "#2d3037"); floor.position.set((X0 + X1) / 2, BOT - 1.5, (Z0 + Z1) / 2 - 1.5); floor.parent = this.root; floor.receiveShadows = true; floor.isPickable = false;
+    // grassy lip along the top of the walls, with a few trees
+    const grass = mat(this.scene, "#6fae47");
+    const lipB = MeshBuilder.CreateBox("lipB", { width: W + 6, height: 1.2, depth: 5 }, this.scene); lipB.material = grass; lipB.position.set((X0 + X1) / 2, TOP + 0.6, Z0 - 2);
+    const lipL = MeshBuilder.CreateBox("lipL", { width: 5, height: 1.2, depth: D }, this.scene); lipL.material = grass; lipL.position.set(X0 - 2, TOP + 0.6, (Z0 + Z1) / 2);
+    const lipR = MeshBuilder.CreateBox("lipR", { width: 5, height: 1.2, depth: D }, this.scene); lipR.material = grass; lipR.position.set(X1 + 2, TOP + 0.6, (Z0 + Z1) / 2);
+    for (const l of [lipB, lipL, lipR]) { l.parent = this.root; l.receiveShadows = true; l.isPickable = false; }
+    const trunkM = mat(this.scene, "#6b4a2e"), leafM = mat(this.scene, "#4f8f3a"), leafM2 = mat(this.scene, "#3f7a36");
+    for (let i = 0; i < 16; i++) {
+      const onBack = i < 10;
+      const tx = onBack ? X0 + 4 + r() * (W - 8) : (i % 2 ? X0 - 2 : X1 + 2), tz = onBack ? Z0 - 2 + (r() - 0.5) * 2 : Z0 + 4 + r() * (D - 12);
+      if (onBack && Math.abs(tx) < 8) continue; // keep the shaft collar clear
+      const s = 0.7 + r() * 0.6;
+      const t = MeshBuilder.CreateCylinder("utr", { diameter: 0.5 * s, height: 2.4 * s, tessellation: 6 }, this.scene); t.material = trunkM; t.position.set(tx, TOP + 1.2 + 1.2 * s, tz);
+      const c = MeshBuilder.CreateCylinder("ucn", { diameterTop: 0, diameterBottom: 3.2 * s, height: 5 * s, tessellation: 7 }, this.scene); c.material = i % 3 ? leafM : leafM2; c.position.set(tx, TOP + 1.2 + 4.2 * s, tz);
+      for (const m of [t, c]) { m.parent = this.root; m.isPickable = false; this.shadow.addShadowCaster(m); }
+    }
+    // boulders studding the back wall, and glinting ore specks (bloom makes them sparkle)
+    const boulder = [mat(this.scene, "#4e5259"), mat(this.scene, "#6a5a48"), mat(this.scene, "#3f434b")];
+    for (let i = 0; i < 70; i++) {
+      const b = MeshBuilder.CreateIcoSphere("bld", { radius: 0.8 + r() * 2.2, subdivisions: 1, flat: true }, this.scene);
+      b.material = boulder[i % 3]; b.scaling.set(1.2, 0.7 + r() * 0.4, 0.5);
+      b.position.set(X0 + r() * W, BOT + 4 + r() * (TOP - BOT - 8), Z0 - 0.2); b.rotation.set(r(), r(), r());
+      b.parent = this.root; b.isPickable = false;
+    }
+    const ore = mat(this.scene, "#ffd36a", "#e0a020");
+    for (let i = 0; i < 60; i++) {
+      const g = MeshBuilder.CreateIcoSphere("ore", { radius: 0.25 + r() * 0.35, subdivisions: 0 }, this.scene);
+      g.material = ore; g.position.set(20 + r() * 50, -62 + r() * 56, Z0 + 0.1); g.rotation.set(r(), r(), r());
+      g.parent = this.root; g.isPickable = false;
+    }
+    // warm strip lights along each drive
+    const lamp = mat(this.scene, "#fff0c0", "#ffcf70");
+    for (const lv of LEVELS) for (let lx = 8; lx < 64; lx += 7) {
+      const l = MeshBuilder.CreateBox("dlamp", { width: 1.6, height: 0.3, depth: 0.5 }, this.scene);
+      l.material = lamp; l.position.set(lx, lv.y + 3.1, -3.2); l.parent = this.root; l.isPickable = false;
+    }
   }
 
   // ---- save / restore --------------------------------------------------------

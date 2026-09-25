@@ -19,7 +19,8 @@ import "@babylonjs/core/Culling/ray";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 
-import { createTerrain, heightAt, setRelief, setLand, SEA_LEVEL, PAD_RADIUS, TERRAIN_SIZE } from "./terrain.js";
+import { createTerrain, gradeFlat, heightAt, setRelief, setLand, SEA_LEVEL, PAD_RADIUS, BUILD_RADIUS } from "./terrain.js";
+import { Environment } from "./environment.js";
 import { ghostify, createHeadframe } from "./buildings.js";
 import { CATALOG, specOf, type BuildingSpec } from "./catalog.js";
 import { WorkerCrew } from "./workers.js";
@@ -43,7 +44,10 @@ import { SCENARIOS, type Scenario } from "./scenarios.js";
 import { loadCompany, saveCompany, legacyForGrade, hasPerk } from "./company.js";
 import { writeSave, clearSave, SAVE_VERSION } from "./savegame.js";
 
-const SKY = "#8ec5e6";
+// Default surface camera: a three-quarter view with the horizon in frame.
+const SURF_VIEW = { alpha: -Math.PI * 0.62, beta: 1.24, radius: 178, target: new Vector3(-14, 10, 6) };
+/** Graphics quality (high = SSAO + 4k shadows). Persisted; auto-drops on slow machines. */
+function gfxHigh(): boolean { try { return localStorage.getItem("bt_gfx") !== "low"; } catch { return true; } }
 const START_CASH = 150_000_000;
 const CONNECT_RANGE = 130; // max feed-line reach from a supply work to the plant
 // Research tree — permanent campaign perks bought with RP earned from milling + cured stopes.
@@ -206,7 +210,8 @@ export class World {
     this.canvas.id = "renderCanvas";
     this.root.appendChild(this.canvas);
 
-    this.engine = new Engine(this.canvas, true, { preserveDrawingBuffer: false, stencil: false });
+    this.engine = new Engine(this.canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
+    this.engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 1.5)); // crisp on hi-DPI, capped for speed
     this.scene = new Scene(this.engine);
     this.setSky(false);
 
@@ -216,7 +221,11 @@ export class World {
     this.surfaceRoot = new TransformNode("surface", this.scene);
     setRelief(this.scenario.relief ?? 1); setLand(this.scenario.land ?? "hills"); // biome + ruggedness (before terrain + placements)
     this.ground = createTerrain(this.scene, this.scenario.terrain); this.ground.parent = this.surfaceRoot;
-    if (this.scenario.wet || this.scenario.land === "seaside") this.addWaterPlane(); // sea / standing water
+    this.env = new Environment(this.scene, this.camera, this.sun, this.surfaceRoot, (m) => this.shadow.addShadowCaster(m));
+    if (this.scenario.wet || this.scenario.land === "seaside") this.env.addWater(SEA_LEVEL); // sea / standing water
+    this.env.setupPost(gfxHigh());
+    this.applyWeatherVisuals();
+    this.autoQuality();
     this.portal = this.createPortal();
     this.crew = new WorkerCrew(
       this.scene, 5, PAD_RADIUS - 6, (m) => this.shadow.addShadowCaster(m), this.surfaceRoot,
@@ -476,51 +485,68 @@ export class World {
 
   private setSky(underground: boolean) {
     if (underground) {
-      this.scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
-      this.scene.fogColor = Color3.FromHexString("#0a0d12");
+      this.scene.clearColor = new Color4(0.07, 0.09, 0.12, 1);
+      this.scene.fogColor = Color3.FromHexString("#11161d");
       this.scene.fogMode = Scene.FOGMODE_EXP2; this.scene.fogDensity = 0.0032;
       if (this.rainPS) this.rainPS.emitRate = 0; // no weather fx below ground / in plant
       this.sound.setRain(0);
     } else {
-      this.scene.clearColor = new Color4(0.556, 0.772, 0.902, 1);
-      this.scene.fogColor = Color3.FromHexString(SKY);
-      this.scene.fogMode = Scene.FOGMODE_EXP2; this.scene.fogDensity = 0.0032;
-      if (this.hemi) this.applyWeatherVisuals(); // tint the surface sky by current weather
+      this.scene.fogMode = Scene.FOGMODE_EXP2; this.scene.fogDensity = 0.0021;
+      if (this.env) this.applyWeatherVisuals(); // tint the surface sky by current weather
     }
   }
 
   private setupCamera() {
-    const cam = new ArcRotateCamera("cam", -Math.PI * 0.72, 0.80, 116, new Vector3(-10, 2, 0), this.scene);
+    const cam = new ArcRotateCamera("cam", SURF_VIEW.alpha, SURF_VIEW.beta, SURF_VIEW.radius, SURF_VIEW.target.clone(), this.scene);
     cam.attachControl(this.canvas, true);
-    cam.lowerRadiusLimit = 40; cam.upperRadiusLimit = 210;
-    cam.lowerBetaLimit = 0.2; cam.upperBetaLimit = 1.45;
-    cam.wheelPrecision = 1.6; cam.panningSensibility = 26;
+    cam.lowerRadiusLimit = 30; cam.upperRadiusLimit = 260;
+    cam.lowerBetaLimit = 0.2; cam.upperBetaLimit = 1.38;
+    cam.wheelDeltaPercentage = 0.012; cam.panningSensibility = 26; cam.inertia = 0.85;
+    cam.minZ = 0.5; cam.maxZ = 4000;
     cam.panningDistanceLimit = 160; cam.panningInertia = 0.6;
     this.camera = cam;
   }
 
+  private env!: Environment;
+  /** Watch the frame rate for a few seconds; if it is poor, drop SSAO so it stays smooth. */
+  private autoQuality() {
+    if (!gfxHigh()) return;
+    let frames = 0, t = 0;
+    const obs = this.scene.onAfterRenderObservable.add(() => {
+      t += this.engine.getDeltaTime(); frames++;
+      if (t > 6000) {
+        this.scene.onAfterRenderObservable.remove(obs);
+        const fps = (frames * 1000) / t;
+        if (fps < 28) { this.env.enableSSAO(false); try { localStorage.setItem("bt_gfx", "low"); } catch { /* ignore */ } }
+      }
+    });
+  }
   private hemi!: HemisphericLight;
   private sun!: DirectionalLight;
   private setupLights() {
-    this.hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene);
-    this.hemi.intensity = 0.75; this.hemi.groundColor = Color3.FromHexString("#42502f");
-    this.sun = new DirectionalLight("sun", new Vector3(-0.6, -1, -0.4), this.scene);
-    this.sun.position = new Vector3(90, 140, 70); this.sun.intensity = 1.1;
-    this.shadow = new ShadowGenerator(1024, this.sun);
-    this.shadow.useBlurExponentialShadowMap = true; this.shadow.blurKernel = 16;
+    this.hemi = new HemisphericLight("hemi", new Vector3(0.2, 1, 0.1), this.scene);
+    this.hemi.intensity = 0.62; this.hemi.diffuse = Color3.FromHexString("#cfe2ff"); this.hemi.groundColor = Color3.FromHexString("#6b5d45");
+    this.hemi.specular = Color3.Black();
+    // a warm, lowish afternoon sun: long readable shadows across the site
+    this.sun = new DirectionalLight("sun", new Vector3(-0.62, -0.72, -0.32), this.scene);
+    this.sun.position = new Vector3(160, 190, 85); this.sun.intensity = 1.55; this.sun.diffuse = Color3.FromHexString("#fff0d6");
+    this.sun.autoUpdateExtends = false; this.sun.shadowFrustumSize = 300; // fixed ortho box over the playable site
+    this.sun.shadowMinZ = 1; this.sun.shadowMaxZ = 600;
+    this.shadow = new ShadowGenerator(gfxHigh() ? 4096 : 2048, this.sun);
+    this.shadow.usePercentageCloserFiltering = true; this.shadow.filteringQuality = ShadowGenerator.QUALITY_HIGH;
+    this.shadow.bias = 0.0006; this.shadow.normalBias = 0.02; this.shadow.darkness = 0.25;
   }
   /** Tint the sky + light by the current weather (call only when on/entering surface). */
   private applyWeatherVisuals() {
-    const P: Record<Weather, { sky: [number, number, number]; fog: string; hemi: number; sun: number }> = {
-      clear: { sky: [0.556, 0.772, 0.902], fog: "#8fb8da", hemi: 0.75, sun: 1.1 },
-      rain:  { sky: [0.42, 0.47, 0.52], fog: "#6a727a", hemi: 0.55, sun: 0.5 },
-      storm: { sky: [0.20, 0.22, 0.27], fog: "#31363d", hemi: 0.4, sun: 0.28 },
-      heat:  { sky: [0.74, 0.69, 0.55], fog: "#cbb890", hemi: 0.92, sun: 1.35 },
-      cold:  { sky: [0.62, 0.68, 0.74], fog: "#a2b2bf", hemi: 0.72, sun: 0.85 },
+    const P: Record<Weather, { zenith: string; horizon: string; glow: number; hemi: number; sun: number }> = {
+      clear: { zenith: "#3f86d6", horizon: "#cfe3ef", glow: 1, hemi: 0.62, sun: 1.55 },
+      rain:  { zenith: "#5d6b78", horizon: "#9aa6ae", glow: 0.15, hemi: 0.6, sun: 0.55 },
+      storm: { zenith: "#2a3038", horizon: "#555d66", glow: 0, hemi: 0.45, sun: 0.3 },
+      heat:  { zenith: "#4d8fd0", horizon: "#f1dcb4", glow: 1.3, hemi: 0.66, sun: 1.8 },
+      cold:  { zenith: "#6f9cc9", horizon: "#dfe8ef", glow: 0.7, hemi: 0.7, sun: 1.15 },
     };
     const p = P[this.weather];
-    this.scene.clearColor = new Color4(p.sky[0], p.sky[1], p.sky[2], 1);
-    this.scene.fogColor = Color3.FromHexString(p.fog);
+    this.env.setSky({ zenith: p.zenith, horizon: p.horizon, sun: p.glow });
     this.hemi.intensity = p.hemi; this.sun.intensity = p.sun;
     this.setWeatherFx();
   }
@@ -579,27 +605,37 @@ export class World {
   }
 
   private createPortal(): Vector3 {
-    const x = -64, z = 10, y = heightAt(x, z);
+    const x = -66, z = 10, y = heightAt(x + 8, z);
     const mk = (hex: string) => { const m = new StandardMaterial("pm", this.scene); m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black(); return m; };
-    // benched box-cut: tan steps descending toward the adit, like ground cut into the slope
-    for (let k = 0; k < 3; k++) {
-      const w = 34 - k * 7, d = 30 - k * 6;
-      const bench = MeshBuilder.CreateBox("boxcut", { width: w, height: 1.2, depth: d }, this.scene);
-      bench.material = mk(k === 2 ? "#6b6256" : "#7c7060"); bench.position.set(x + 9 + k * 1.5, y + 0.6 - k * 1.4, z);
-      bench.parent = this.surfaceRoot; bench.receiveShadows = true;
+    const add = (m: Mesh, cast = true) => { m.parent = this.surfaceRoot; m.receiveShadows = true; if (cast) this.shadow.addShadowCaster(m); return m; };
+    // gravel apron where trucks turn in front of the adit
+    const apron = MeshBuilder.CreateDisc("aditApron", { radius: 11, tessellation: 28 }, this.scene);
+    apron.rotation.x = Math.PI / 2; apron.material = mk("#a69a84"); apron.position.set(x + 9, y + 0.06, z); add(apron, false);
+    // concrete portal set facing the site (+x), buried into the knoll behind it
+    const g = new TransformNode("adit", this.scene); g.parent = this.surfaceRoot; g.position.set(x, y, z);
+    const part = (m: Mesh) => { m.parent = g; m.receiveShadows = true; this.shadow.addShadowCaster(m); return m; };
+    const wall = MeshBuilder.CreateBox("aditWall", { width: 4, height: 11, depth: 16 }, this.scene); wall.material = mk("#b3ada0"); wall.position.set(-1, 5.5, 0); part(wall);
+    for (const s of [-1, 1]) { // wing walls
+      const w = MeshBuilder.CreateBox("aditWing", { width: 7, height: 7, depth: 1.2 }, this.scene); w.material = mk("#a7a194"); w.position.set(2, 3.5, s * 7.6); w.rotation.y = s * -0.35; part(w);
     }
-    // concrete adit set (portal collar) + dark mouth
-    const frame = MeshBuilder.CreateBox("adit", { width: 11, height: 8, depth: 3 }, this.scene);
-    frame.material = mk("#8c8478"); frame.position.set(x, y - 2.4 + 3.5, z); frame.parent = this.surfaceRoot; this.shadow.addShadowCaster(frame);
-    const lintel = MeshBuilder.CreateBox("aditLintel", { width: 12, height: 1.4, depth: 3.4 }, this.scene);
-    lintel.material = mk("#726a5d"); lintel.position.set(x, y - 2.4 + 7.4, z); lintel.parent = this.surfaceRoot;
-    const mouth = MeshBuilder.CreateBox("aditMouth", { width: 6.5, height: 5.5, depth: 1.4 }, this.scene);
-    mouth.material = mk("#0e1216"); mouth.position.set(x, y - 2.4 + 3, z + 1.3); mouth.parent = this.surfaceRoot;
-    // headframe over the hoisting shaft beside the portal — the ore-hoist that feeds the mill
-    const hf = createHeadframe(this.scene, (m) => this.shadow.addShadowCaster(m));
-    hf.position.set(x - 3, heightAt(x - 3, z - 20), z - 20); hf.parent = this.surfaceRoot;
-    this.oreHoistAt = new Vector3(x - 3, heightAt(x - 3, z - 20) + 7, z - 20); // conveyor picks up hoisted ore here
-    return new Vector3(x + 7, y, z);
+    const mouth = MeshBuilder.CreateCylinder("aditMouth", { diameter: 7, height: 4.4, tessellation: 24, arc: 0.5 }, this.scene);
+    mouth.rotation.set(0, 0, Math.PI / 2); mouth.material = mk("#101418"); mouth.position.set(0.3, 3.4, 0); part(mouth);
+    const mouthLow = MeshBuilder.CreateBox("aditMouthLow", { width: 4.4, height: 3.4, depth: 7 }, this.scene); mouthLow.material = mk("#101418"); mouthLow.position.set(0.3, 1.7, 0); part(mouthLow);
+    const lintel = MeshBuilder.CreateBox("aditLintel", { width: 4.6, height: 1.2, depth: 16.6 }, this.scene); lintel.material = mk("#8d877a"); lintel.position.set(-0.8, 11.4, 0); part(lintel);
+    const sign = MeshBuilder.CreateBox("aditSign", { width: 0.4, height: 1.6, depth: 7.5 }, this.scene); sign.material = mk("#f2b233"); sign.position.set(1.3, 8.6, 0); part(sign);
+    // hazard-striped bollards and a pair of lamps either side of the mouth
+    for (const s of [-1, 1]) {
+      const b = MeshBuilder.CreateCylinder("bollard", { diameter: 0.7, height: 1.4, tessellation: 10 }, this.scene); b.material = mk("#f2b233"); b.position.set(3, 0.7, s * 4.6); part(b);
+      const lamp = MeshBuilder.CreateSphere("aditLamp", { diameter: 0.7, segments: 6 }, this.scene);
+      const lm = mk("#fff2c0"); lm.emissiveColor = Color3.FromHexString("#ffd98a"); lamp.material = lm; lamp.position.set(1.3, 7.2, s * 4.4); lamp.parent = g;
+    }
+    // headframe over the hoisting shaft beside the portal (the ore hoist that feeds the mill)
+    const hx = -56, hz = -16;
+    const hf = createHeadframe(this.scene, (m) => { this.shadow.addShadowCaster(m); m.receiveShadows = true; });
+    hf.position.set(hx, heightAt(hx, hz), hz); hf.parent = this.surfaceRoot;
+    const collar = MeshBuilder.CreateBox("collar", { width: 12, height: 0.5, depth: 9 }, this.scene); collar.material = mk("#9d9788"); collar.position.set(hx, heightAt(hx, hz) + 0.2, hz); add(collar, false);
+    this.oreHoistAt = new Vector3(hx, heightAt(hx, hz) + 7, hz); // conveyor picks up hoisted ore here
+    return new Vector3(x + 9, y, z);
   }
 
   // ---- mode toggle ----------------------------------------------------------
@@ -617,7 +653,7 @@ export class World {
     this.setSky(true);
     // view the cutaway roughly face-on (X across, depth down), stopes toward camera
     this.camera.setTarget(new Vector3(30, -30, 7));
-    this.camera.radius = 104; this.camera.beta = 1.04; this.camera.alpha = Math.PI * 0.42;
+    this.camera.radius = 132; this.camera.beta = 1.12; this.camera.alpha = Math.PI * 0.42;
     this.hud.setMode("underground");
     this.hud.setPanel(`<div class="panelHint">Click a stope to design its reticulation and pour it.</div>`);
     this.checkTutorial();
@@ -629,7 +665,7 @@ export class World {
     this.underground.root.setEnabled(false);
     this.surfaceRoot.setEnabled(true);
     this.setSky(false);
-    this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
+    this.camera.setTarget(SURF_VIEW.target.clone()); this.camera.radius = SURF_VIEW.radius; this.camera.beta = SURF_VIEW.beta; this.camera.alpha = SURF_VIEW.alpha;
     this.hud.setMode("surface");
     this.refreshObjective();
   }
@@ -642,7 +678,7 @@ export class World {
     this.setSky(true);
     this.plantInterior.enter();
     const c = this.plantInterior.center();
-    this.camera.setTarget(c); this.camera.radius = 58; this.camera.beta = 0.62; this.camera.alpha = -Math.PI * 0.72;
+    this.camera.setTarget(c); this.camera.radius = 72; this.camera.beta = 0.86; this.camera.alpha = Math.PI * 0.3;
     this.hud.setHidden(true);
   }
 
@@ -652,7 +688,7 @@ export class World {
     this.checkTutorial(); // the plant-line step completes on exit
     this.surfaceRoot.setEnabled(true);
     this.setSky(false);
-    this.camera.setTarget(new Vector3(-10, 2, 0)); this.camera.radius = 116; this.camera.beta = 0.80; this.camera.alpha = -Math.PI * 0.72;
+    this.camera.setTarget(SURF_VIEW.target.clone()); this.camera.radius = SURF_VIEW.radius; this.camera.beta = SURF_VIEW.beta; this.camera.alpha = SURF_VIEW.alpha;
     this.hud.setHidden(false);
     this.refreshObjective();
   }
@@ -1135,7 +1171,7 @@ export class World {
     if (spec.offPad) {
       // big works site out on the terrain: clear of the plant pad, but on the map
       if (d < PAD_RADIUS + half * 0.5) return false;
-      if (d > TERRAIN_SIZE / 2 - half - 6) return false;
+      if (d > BUILD_RADIUS - half) return false;
     } else {
       // plant works sit on the graded pad near the origin
       if (d > PAD_RADIUS - Math.max(spec.fw, spec.fd) * 0.35) return false;
@@ -1153,6 +1189,7 @@ export class World {
     if (spec.offPad) this.gradePlatform(at, spec.fw, spec.fd); // cut a flat bench into the slope first
     const root = spec.make(this.scene, (m) => { this.shadow.addShadowCaster(m); m.metadata = { buildingType: spec.type, bi }; });
     root.parent = this.surfaceRoot; root.position.copyFrom(at);
+    this.env.clearAround(at.x, at.z, Math.max(spec.fw, spec.fd) * 0.75 + 3); // clear the land for the footprint
     if (!silent) this.cash -= spec.cost;
     const placed: Placed = { spec, root, pos: at, marker: null, raises: 0, tier: 0, built: false, buildProgress: 0, buildDays: 0, scaffold: null };
     this.buildings.push(placed);
@@ -1362,25 +1399,29 @@ export class World {
 
   /** Cut a flat gravel bench into the sloping terrain under an off-pad structure. */
   private gradePlatform(at: Vector3, fw: number, fd: number) {
-    const pad = MeshBuilder.CreateBox("gradePad", { width: fw + 8, height: 9, depth: fd + 8 }, this.scene);
-    const m = new StandardMaterial("gradePadM", this.scene);
-    m.diffuseColor = Color3.FromHexString("#8f8578"); m.specularColor = Color3.Black();
-    pad.material = m; pad.position.set(at.x, at.y - 4.1, at.z); // top ~0.4 above ground, base sunk into the hill
-    pad.parent = this.surfaceRoot; pad.receiveShadows = true; pad.isPickable = false;
+    gradeFlat(at.x, at.z, fw, fd, at.y); // the land itself is cut + filled flat under the footprint
   }
 
   /** Haul roads from every building to the mine portal, so the site reads as connected. */
   private drawRoads() {
     this.roadMeshes.forEach((m) => m.dispose()); this.roadMeshes = [];
     const roadMat = new StandardMaterial("roadMat", this.scene);
-    roadMat.diffuseColor = Color3.FromHexString("#4a4640"); roadMat.specularColor = Color3.Black();
+    roadMat.diffuseColor = Color3.FromHexString("#6f6558"); roadMat.specularColor = Color3.Black(); roadMat.backFaceCulling = false; roadMat.zOffset = -2;
     for (const b of this.buildings) {
       const dx = this.portal.x - b.pos.x, dz = this.portal.z - b.pos.z;
       const len = Math.hypot(dx, dz); if (len < 1) continue;
-      const road = MeshBuilder.CreateBox("road", { width: 4, height: 0.2, depth: len }, this.scene);
-      road.material = roadMat; road.parent = this.surfaceRoot;
-      road.position.set((b.pos.x + this.portal.x) / 2, heightAt((b.pos.x + this.portal.x) / 2, (b.pos.z + this.portal.z) / 2) + 0.15, (b.pos.z + this.portal.z) / 2);
-      road.rotation.y = Math.atan2(dx, dz);
+      // a ribbon that hugs the ground, sampled every ~2.5 m
+      const nx = -dz / len, nz = dx / len, n = Math.max(2, Math.ceil(len / 2.5));
+      const left: Vector3[] = [], right: Vector3[] = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, cx = b.pos.x + dx * t, cz = b.pos.z + dz * t;
+        for (const [arr, s] of [[left, 1], [right, -1]] as [Vector3[], number][]) {
+          const px = cx + nx * 2.2 * s, pz = cz + nz * 2.2 * s;
+          arr.push(new Vector3(px, heightAt(px, pz) + 0.14, pz));
+        }
+      }
+      const road = MeshBuilder.CreateRibbon("road", { pathArray: [left, right] }, this.scene);
+      road.material = roadMat; road.parent = this.surfaceRoot; road.receiveShadows = true;
       road.isPickable = false;
       this.roadMeshes.push(road);
     }
@@ -1401,16 +1442,6 @@ export class World {
       if (!added) break;
     }
     return energized;
-  }
-
-  /** Standing water across the low wetland ground (wet mines) — sits below the pad,
-   *  pooling in the terrain lows around the site. */
-  private addWaterPlane() {
-    const w = MeshBuilder.CreateGround("wetwater", { width: TERRAIN_SIZE, height: TERRAIN_SIZE }, this.scene);
-    const m = new StandardMaterial("wetwaterM", this.scene);
-    m.diffuseColor = Color3.FromHexString("#2d5a7a"); m.emissiveColor = Color3.FromHexString("#0f2a3a");
-    m.specularColor = Color3.FromHexString("#4a7a9a"); m.alpha = 0.55;
-    w.material = m; w.position.y = SEA_LEVEL; w.parent = this.surfaceRoot; w.isPickable = false; w.receiveShadows = false;
   }
 
   /** The surface pipe run from the plant to the shaft collar costs friction head:

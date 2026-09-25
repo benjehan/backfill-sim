@@ -5,6 +5,7 @@
 import { Scene } from "@babylonjs/core/scene";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
@@ -24,6 +25,20 @@ const familyOf = (type: string) =>
   : type.startsWith("pump") ? "pump" : type.startsWith("cyclone") ? "cyclone" : type.startsWith("src_") ? "source" : type;
 const STATE_EMIT: Record<string, string> = { running: "#194b32", throttled: "#4a3a10", starved: "#4a1414", idle: "#101418", off: "#101418" };
 
+/** Concrete floor with a faint painted tile grid and a yellow safety border. */
+function floorTexture(scene: Scene, cols: number, rows: number): DynamicTexture {
+  const px = 32, W = cols * px, H = rows * px;
+  const t = new DynamicTexture("plantFloorTex", { width: W, height: H }, scene, true);
+  const g = t.getContext() as CanvasRenderingContext2D;
+  g.fillStyle = "#a9adb2"; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 1400; i++) { g.fillStyle = `rgba(${Math.random() < 0.5 ? "0,0,0" : "255,255,255"},0.05)`; g.fillRect(Math.random() * W, Math.random() * H, 3 + Math.random() * 10, 3 + Math.random() * 10); }
+  g.strokeStyle = "rgba(60,66,74,0.35)"; g.lineWidth = 1.5;
+  for (let c = 0; c <= cols; c++) { g.beginPath(); g.moveTo(c * px, 0); g.lineTo(c * px, H); g.stroke(); }
+  for (let r = 0; r <= rows; r++) { g.beginPath(); g.moveTo(0, r * px); g.lineTo(W, r * px); g.stroke(); }
+  g.strokeStyle = "#e8b030"; g.lineWidth = 6; g.strokeRect(3, 3, W - 6, H - 6);
+  t.update(true);
+  return t;
+}
 function mat(scene: Scene, hex: string) { const m = new StandardMaterial("pm", scene); m.diffuseColor = Color3.FromHexString(hex); m.specularColor = Color3.Black(); return m; }
 
 export class PlantInterior {
@@ -92,12 +107,36 @@ export class PlantInterior {
   }
 
   private buildFloor() {
-    const f = MeshBuilder.CreateBox("plantFloor", { width: COLS * T3, height: 1, depth: ROWS * T3 }, this.scene);
-    f.material = mat(this.scene, "#2b3038"); f.position.set(0, -0.5, 0); f.parent = this.root; f.receiveShadows = true;
+    const W = COLS * T3, D = ROWS * T3;
+    // polished concrete slab with a faint tile grid baked into a texture
+    const f = MeshBuilder.CreateBox("plantFloor", { width: W, height: 1, depth: D }, this.scene);
+    const fm = mat(this.scene, "#ffffff");
+    fm.diffuseTexture = floorTexture(this.scene, COLS, ROWS);
+    fm.specularColor = new Color3(0.12, 0.12, 0.12); fm.specularPower = 40;
+    f.material = fm; f.position.set(0, -0.5, 0); f.parent = this.root; f.receiveShadows = true;
     this.floor = f;
-    // faint grid tiles as a border frame
-    const frame = MeshBuilder.CreateBox("plantFrame", { width: COLS * T3 + 2, height: 0.4, depth: ROWS * T3 + 2 }, this.scene);
-    frame.material = mat(this.scene, "#1b2027"); frame.position.set(0, -0.8, 0); frame.parent = this.root;
+    const apron = MeshBuilder.CreateBox("plantApron", { width: W + 10, height: 0.6, depth: D + 10 }, this.scene);
+    apron.material = mat(this.scene, "#6d7178"); apron.position.set(0, -0.9, 0); apron.parent = this.root; apron.receiveShadows = true; apron.isPickable = false;
+    // the hall: back + left walls (clad steel with a window band), columns, trusses; front/right open for the view
+    const H = 16, clad = mat(this.scene, "#5f7d95"), trim = mat(this.scene, "#f2b233"), steel = mat(this.scene, "#3e4a56");
+    const glass = mat(this.scene, "#bfe3ff"); glass.emissiveColor = Color3.FromHexString("#7fb6e0");
+    const deco = (m: Mesh) => { m.parent = this.root; m.isPickable = false; m.receiveShadows = true; return m; };
+    const wallB = deco(MeshBuilder.CreateBox("hallB", { width: W + 10, height: H, depth: 1 }, this.scene)); wallB.material = clad; wallB.position.set(0, H / 2 - 0.6, -D / 2 - 5);
+    const wallL = deco(MeshBuilder.CreateBox("hallL", { width: 1, height: H, depth: D + 10 }, this.scene)); wallL.material = clad; wallL.position.set(-W / 2 - 5, H / 2 - 0.6, 0);
+    const winB = deco(MeshBuilder.CreateBox("winB", { width: W + 6, height: 2.2, depth: 0.3 }, this.scene)); winB.material = glass; winB.position.set(0, H - 4, -D / 2 - 4.4);
+    const winL = deco(MeshBuilder.CreateBox("winL", { width: 0.3, height: 2.2, depth: D + 6 }, this.scene)); winL.material = glass; winL.position.set(-W / 2 - 4.4, H - 4, 0);
+    const kickB = deco(MeshBuilder.CreateBox("kickB", { width: W + 10, height: 1, depth: 1.2 }, this.scene)); kickB.material = trim; kickB.position.set(0, 0, -D / 2 - 4.6);
+    const kickL = deco(MeshBuilder.CreateBox("kickL", { width: 1.2, height: 1, depth: D + 10 }, this.scene)); kickL.material = trim; kickL.position.set(-W / 2 - 4.6, 0, 0);
+    for (let x = -W / 2 - 4; x <= W / 2 + 5; x += 12) {
+      const c = deco(MeshBuilder.CreateBox("col", { width: 0.9, height: H, depth: 0.9 }, this.scene)); c.material = steel; c.position.set(x, H / 2 - 0.6, -D / 2 - 4.2);
+      const tr = deco(MeshBuilder.CreateBox("truss", { width: 0.6, height: 0.9, depth: 10 }, this.scene)); tr.material = steel; tr.position.set(x, H - 0.8, -D / 2 + 0.2);
+    }
+    for (let z = -D / 2 - 4; z <= D / 2 + 5; z += 12) {
+      const c = deco(MeshBuilder.CreateBox("col", { width: 0.9, height: H, depth: 0.9 }, this.scene)); c.material = steel; c.position.set(-W / 2 - 4.2, H / 2 - 0.6, z);
+    }
+    // overhead gantry crane rail along the back wall
+    const rail = deco(MeshBuilder.CreateBox("craneRail", { width: W + 8, height: 0.8, depth: 1.2 }, this.scene)); rail.material = trim; rail.position.set(0, H - 2.2, -D / 2 - 3.2);
+    const hook = deco(MeshBuilder.CreateBox("craneBeam", { width: 1.2, height: 1, depth: 8 }, this.scene)); hook.material = trim; hook.position.set(-W / 4, H - 2.2, -D / 2 + 0.8);
   }
 
   // ---- render machines + pipes from plant state -----------------------------

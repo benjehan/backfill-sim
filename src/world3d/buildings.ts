@@ -189,10 +189,10 @@ export const createSubstation: Build = (scene, onMesh) =>
 export const createHeadframe: Build = (scene, onMesh) =>
   rootOf(scene, "headframe", () => {
     const parts: Mesh[] = [];
-    const steel = "#48535e", dark = "#3a444d";
+    const steel = "#c0512f", dark = "#8e3a24"; // classic oxide-red headframe
     // hoist house at the base
-    const house = box(scene, "hfhouse", 9, 5, 7, "#8a7f6c"); house.position.set(-8, 2.5, 0); parts.push(house);
-    const houseRoof = box(scene, "hfroof", 9.4, 0.6, 7.4, "#5a4d3f"); houseRoof.position.set(-8, 5.3, 0); parts.push(houseRoof);
+    const house = box(scene, "hfhouse", 9, 5, 7, "#a65a3e"); house.position.set(-8, 2.5, 0); parts.push(house);
+    const houseRoof = box(scene, "hfroof", 9.4, 0.6, 7.4, "#4a5560"); houseRoof.position.set(-8, 5.3, 0); parts.push(houseRoof);
     // four legs, splayed at the base (back pair vertical, front pair raked)
     const legH = 22;
     const legAt = (x: number, z: number, rake: number) => {
@@ -208,7 +208,7 @@ export const createHeadframe: Build = (scene, onMesh) =>
     // head platform + two sheave wheels
     const plat = box(scene, "hfplat", 7, 1, 6, dark); plat.position.set(-0.4, legH + 0.4, 0); parts.push(plat);
     for (const z of [-1.6, 1.6]) {
-      const wheel = cyl(scene, "hfwheel", 5, 0.6, "#6d7783", 20); wheel.rotation.x = Math.PI / 2; wheel.position.set(-1.5, legH + 3.4, z); parts.push(wheel);
+      const wheel = cyl(scene, "hfwheel", 5, 0.6, "#f2b233", 20); wheel.rotation.x = Math.PI / 2; wheel.position.set(-1.5, legH + 3.4, z); parts.push(wheel);
       const hub = cyl(scene, "hfhub", 1.2, 0.9, "#3a444d", 10); hub.rotation.x = Math.PI / 2; hub.position.set(-1.5, legH + 3.4, z); parts.push(hub);
     }
     // hoist ropes from the sheaves down into the house
