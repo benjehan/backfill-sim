@@ -4,6 +4,7 @@
 import { Scene } from "@babylonjs/core/scene";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
@@ -17,9 +18,34 @@ function mat(scene: Scene, hex: string): StandardMaterial {
 
 type Build = (scene: Scene, onMesh?: (m: Mesh) => void) => TransformNode;
 
+// Building bodies get clad-steel facades (corrugation + a window band) instead of flat colour.
+const FACADE = new Set(["shed", "hall", "wshed", "mhall", "hfhouse", "dhall", "whouse"]);
+const facadeCache = new Map<string, StandardMaterial>();
+function facadeMat(scene: Scene, hex: string, w: number): StandardMaterial {
+  const panes = Math.max(2, Math.round(w / 2.6));
+  const key = hex + ":" + panes;
+  const hit = facadeCache.get(key); if (hit && hit.getScene() === scene) return hit;
+  const S = 256;
+  const t = new DynamicTexture("facade" + key, S, scene, true);
+  const g = t.getContext() as CanvasRenderingContext2D;
+  g.fillStyle = hex; g.fillRect(0, 0, S, S);
+  for (let x = 0; x < S; x += 8) { g.fillStyle = "rgba(0,0,0,0.10)"; g.fillRect(x, 0, 3, S); g.fillStyle = "rgba(255,255,255,0.06)"; g.fillRect(x + 3, 0, 2, S); }
+  g.fillStyle = "rgba(0,0,0,0.22)"; g.fillRect(0, S - 26, S, 26); // dirty kick band at the base
+  const pw = S / panes, top = S * 0.2, hgt = S * 0.2;
+  for (let i = 0; i < panes; i++) {
+    g.fillStyle = "#e9edf0"; g.fillRect(i * pw + pw * 0.12, top - 3, pw * 0.76, hgt + 6);
+    const gr = g.createLinearGradient(0, top, 0, top + hgt); gr.addColorStop(0, "#9fd0f0"); gr.addColorStop(1, "#2f5878");
+    g.fillStyle = gr; g.fillRect(i * pw + pw * 0.16, top, pw * 0.68, hgt);
+  }
+  t.update(true);
+  const m = new StandardMaterial("facadeM", scene);
+  m.diffuseTexture = t; m.specularColor = new Color3(0.05, 0.05, 0.05);
+  facadeCache.set(key, m);
+  return m;
+}
 const box = (scene: Scene, name: string, w: number, h: number, d: number, hex: string) => {
   const m = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
-  m.material = mat(scene, hex);
+  m.material = FACADE.has(name) ? facadeMat(scene, hex, Math.max(w, d)) : mat(scene, hex);
   return m;
 };
 const cyl = (scene: Scene, name: string, dia: number, h: number, hex: string, tess = 16) => {

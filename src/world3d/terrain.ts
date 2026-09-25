@@ -180,7 +180,7 @@ function groundColor(x: number, z: number, h: number, slope: number, p: Palette)
   // rock on steep faces, snow on high flats
   veg = mix(veg, p.rock, sstep(0.45, 0.8, slope));
   if (p.snow && p.snowLine) veg = mix(veg, p.snow, sstep(p.snowLine - 12, p.snowLine + 8, h + fbm(x / 20, z / 20) * 18) * (1 - sstep(0.75, 0.95, slope) * 0.7));
-  if (p.sand) veg = mix(veg, p.sand, 1 - sstep(SEA_LEVEL + 0.6, SEA_LEVEL + 2.6, h));
+  if (p.sand) veg = mix(veg, p.sand, 1 - sstep(SEA_LEVEL + 0.5, SEA_LEVEL + 1.3, h + (fbm(x / 12, z / 12, 2) - 0.5) * 0.8));
 
   // pad: warm gravel with darker wheel-worn blotches
   const pad = mix(p.pad, p.padDark, sstep(0.45, 0.7, fbm(x / 9, z / 9, 3)) * 0.8);

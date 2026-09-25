@@ -525,11 +525,11 @@ export class World {
   private sun!: DirectionalLight;
   private setupLights() {
     this.hemi = new HemisphericLight("hemi", new Vector3(0.2, 1, 0.1), this.scene);
-    this.hemi.intensity = 0.62; this.hemi.diffuse = Color3.FromHexString("#cfe2ff"); this.hemi.groundColor = Color3.FromHexString("#6b5d45");
+    this.hemi.intensity = 0.95; this.hemi.diffuse = Color3.FromHexString("#d6e6ff"); this.hemi.groundColor = Color3.FromHexString("#8a7c62");
     this.hemi.specular = Color3.Black();
     // a warm, lowish afternoon sun: long readable shadows across the site
     this.sun = new DirectionalLight("sun", new Vector3(-0.62, -0.72, -0.32), this.scene);
-    this.sun.position = new Vector3(160, 190, 85); this.sun.intensity = 1.55; this.sun.diffuse = Color3.FromHexString("#fff0d6");
+    this.sun.position = new Vector3(160, 190, 85); this.sun.intensity = 1.35; this.sun.diffuse = Color3.FromHexString("#fff0d6");
     this.sun.autoUpdateExtends = false; this.sun.shadowFrustumSize = 300; // fixed ortho box over the playable site
     this.sun.shadowMinZ = 1; this.sun.shadowMaxZ = 600;
     this.shadow = new ShadowGenerator(gfxHigh() ? 4096 : 2048, this.sun);
@@ -539,11 +539,11 @@ export class World {
   /** Tint the sky + light by the current weather (call only when on/entering surface). */
   private applyWeatherVisuals() {
     const P: Record<Weather, { zenith: string; horizon: string; glow: number; hemi: number; sun: number }> = {
-      clear: { zenith: "#3f86d6", horizon: "#cfe3ef", glow: 1, hemi: 0.62, sun: 1.55 },
-      rain:  { zenith: "#5d6b78", horizon: "#9aa6ae", glow: 0.15, hemi: 0.6, sun: 0.55 },
-      storm: { zenith: "#2a3038", horizon: "#555d66", glow: 0, hemi: 0.45, sun: 0.3 },
-      heat:  { zenith: "#4d8fd0", horizon: "#f1dcb4", glow: 1.3, hemi: 0.66, sun: 1.8 },
-      cold:  { zenith: "#6f9cc9", horizon: "#dfe8ef", glow: 0.7, hemi: 0.7, sun: 1.15 },
+      clear: { zenith: "#3f86d6", horizon: "#cfe3ef", glow: 1, hemi: 0.95, sun: 1.35 },
+      rain:  { zenith: "#5d6b78", horizon: "#9aa6ae", glow: 0.15, hemi: 0.85, sun: 0.5 },
+      storm: { zenith: "#2a3038", horizon: "#555d66", glow: 0, hemi: 0.7, sun: 0.28 },
+      heat:  { zenith: "#4d8fd0", horizon: "#f1dcb4", glow: 1.3, hemi: 0.95, sun: 1.55 },
+      cold:  { zenith: "#6f9cc9", horizon: "#dfe8ef", glow: 0.7, hemi: 0.95, sun: 1.1 },
     };
     const p = P[this.weather];
     this.env.setSky({ zenith: p.zenith, horizon: p.horizon, sun: p.glow });

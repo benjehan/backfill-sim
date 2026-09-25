@@ -306,14 +306,15 @@ export class Environment {
   addWater(level: number) {
     const w = MeshBuilder.CreateGround("water", { width: 3000, height: 3000, subdivisions: 1 }, this.scene);
     const m = new StandardMaterial("waterM", this.scene);
-    m.diffuseColor = Color3.FromHexString("#2a7ea3");
+    m.diffuseColor = Color3.FromHexString("#1f6f96");
     m.specularColor = new Color3(0.9, 0.9, 0.85); m.specularPower = 180;
     m.alpha = 0.86;
     const bump = rippleTexture(this.scene);
     bump.uScale = 260; bump.vScale = 260; m.bumpTexture = bump; bump.level = 0.35;
-    const f = new FresnelParameters(); f.leftColor = Color3.FromHexString("#bfe4f2"); f.rightColor = Color3.FromHexString("#0b3f5c"); f.bias = 0.1; f.power = 2.2;
+    const f = new FresnelParameters(); f.leftColor = Color3.FromHexString("#7fc4de"); f.rightColor = Color3.FromHexString("#06304a"); f.bias = 0.2; f.power = 1.6;
     m.emissiveFresnelParameters = f;
     w.material = m; w.position.y = level; w.isPickable = false; w.parent = this.root;
+    m.fogEnabled = true; w.applyFog = true;
     this.water = w; this.waterBump = bump;
     return w;
   }
@@ -327,7 +328,7 @@ export class Environment {
     p.imageProcessingEnabled = true;
     const ip = p.imageProcessing;
     ip.toneMappingEnabled = true; ip.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-    ip.exposure = 1.18; ip.contrast = 1.12;
+    ip.exposure = 1.1; ip.contrast = 1.1;
     ip.vignetteEnabled = true; ip.vignetteWeight = 1.6; ip.vignetteStretch = 0.6;
     ip.vignetteColor.set(0.08, 0.1, 0.16, 1);
     ip.colorCurvesEnabled = true;
